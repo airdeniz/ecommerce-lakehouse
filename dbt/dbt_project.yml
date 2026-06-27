@@ -11,7 +11,10 @@ models:
   ecommerce:
     staging:
       +materialized: view
+      +schema: staging
     core:
       +materialized: table
+      +schema: silver
     mart:
       +materialized: table
+      +schema: gold

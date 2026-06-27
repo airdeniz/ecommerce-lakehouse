@@ -149,6 +149,16 @@ services:
       timeout: 5s
       retries: 5
 
+  superset:
+    build: ./superset
+    container_name: ecom-superset
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+    depends_on:
+      - airflow-db
+
   airflow-db:
     image: postgres:16
     container_name: ecom-airflow-db
