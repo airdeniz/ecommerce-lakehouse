@@ -86,3 +86,15 @@ services:
         condition: service_healthy
     environment:
       PG_DSN: ${PG_DSN}
+
+  connector-init:
+    image: curlimages/curl:8.6.0
+    container_name: ecom-connector-init
+    depends_on:
+      connect:
+        condition: service_started
+    volumes:
+      - ./debezium/register-postgres.json:/register-postgres.json
+      - ./debezium/register-connector.sh:/register-connector.sh
+    entrypoint: ["/bin/sh", "/register-connector.sh"]
+    restart: "no"

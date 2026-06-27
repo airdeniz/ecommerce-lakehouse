@@ -43,14 +43,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
-### Register Debezium Connector
-
-```bash
-curl -i -X POST -H "Accept:application/json" -H "Content-Type:application/json" \
-  http://localhost:8083/connectors/ \
-  -d @debezium/register-postgres.json
-```
-
 ### Verify
 
 Open Redpanda Console at `http://localhost:8081` — you should see `ecom.public.orders` topic receiving messages.
+
+> Debezium connector is registered automatically on startup via `connector-init` service.
