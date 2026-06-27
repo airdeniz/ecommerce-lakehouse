@@ -24,7 +24,7 @@ Postgres → Debezium (CDC) → Kafka → PySpark → MinIO (Iceberg) → dbt �
 ## Project Phases
 
 - [x] Phase 1 — CDC Pipeline: Postgres + Debezium + Kafka + Order Generator
-- [ ] Phase 2 — Stream Processing: PySpark
+- [x] Phase 2 — Stream Processing: PySpark
 - [ ] Phase 3 — Lakehouse: MinIO + Iceberg + dbt
 - [ ] Phase 4 — Orchestration: Airflow
 - [ ] Phase 5 — Dashboard: Superset
