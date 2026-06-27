@@ -9,4 +9,4 @@ USER airflow
 RUN pip install --no-cache-dir \
     apache-airflow-providers-apache-spark==4.9.0 \
     dbt-core==1.8.0 \
-    dbt-spark==1.8.0
+    dbt-spark[PyHive]==1.8.0

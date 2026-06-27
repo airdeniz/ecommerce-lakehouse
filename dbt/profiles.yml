@@ -4,7 +4,7 @@ ecommerce:
     dev:
       type: spark
       method: thrift
-      host: pyspark
+      host: spark-thrift
       port: 10000
       schema: silver
       threads: 1

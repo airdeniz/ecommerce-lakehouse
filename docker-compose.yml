@@ -107,6 +107,30 @@ services:
         condition: service_healthy
     command: /opt/spark/bin/spark-submit /app/orders_stream.py
 
+  spark-thrift:
+    build: ./pyspark
+    container_name: ecom-spark-thrift
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "10000:10000"
+      - "4041:4040"
+    command: >
+      bash -c "/opt/spark/sbin/start-thriftserver.sh
+      --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+      --conf spark.sql.catalog.lakehouse=org.apache.iceberg.spark.SparkCatalog
+      --conf spark.sql.catalog.lakehouse.type=hadoop
+      --conf spark.sql.catalog.lakehouse.warehouse=s3a://lakehouse/
+      --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000
+      --conf spark.hadoop.fs.s3a.access.key=minioadmin
+      --conf spark.hadoop.fs.s3a.secret.key=minioadmin123
+      --conf spark.hadoop.fs.s3a.path.style.access=true
+      --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+      && tail -f /opt/spark/logs/*"
+
   minio:
     image: minio/minio:latest
     container_name: ecom-minio
@@ -172,6 +196,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./dbt:/opt/airflow/dbt
     command: airflow webserver
 
   airflow-scheduler:
@@ -188,6 +213,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./dbt:/opt/airflow/dbt
     command: airflow scheduler
 
 volumes:
