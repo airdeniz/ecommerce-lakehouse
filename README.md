@@ -25,7 +25,7 @@ Postgres → Debezium (CDC) → Kafka → PySpark → MinIO (Iceberg) → dbt �
 
 - [x] Phase 1 — CDC Pipeline: Postgres + Debezium + Kafka + Order Generator
 - [x] Phase 2 — Stream Processing: PySpark
-- [ ] Phase 3 — Lakehouse: MinIO + Iceberg + dbt
+- [x] Phase 3 — Lakehouse: MinIO + Iceberg + dbt (MinIO + Iceberg ✓, dbt pending)
 - [ ] Phase 4 — Orchestration: Airflow
 - [ ] Phase 5 — Dashboard: Superset
 
@@ -46,5 +46,14 @@ docker compose up -d
 ### Verify
 
 Open Redpanda Console at `http://localhost:8081` — you should see `ecom.public.orders` topic receiving messages.
+
+### Services
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Redpanda Console | http://localhost:8081 | - |
+| Airflow | http://localhost:8082 | admin / admin |
+| MinIO | http://localhost:9001 | minioadmin / minioadmin123 |
+| Debezium REST API | http://localhost:8083 | - |
 
 > Debezium connector is registered automatically on startup via `connector-init` service.
