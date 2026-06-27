@@ -3,7 +3,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StructField, StringType, LongType
+from pyspark.sql.types import StructType, StructField, StringType, LongType, DecimalType
 
 spark = SparkSession.builder \
     .appName("ecommerce-orders-stream") \
@@ -20,6 +20,7 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("WARN")
 
+# ORDERS
 order_schema = StructType([
     StructField("order_id", LongType()),
     StructField("user_id", LongType()),
@@ -28,47 +29,121 @@ order_schema = StructType([
     StructField("created_at", StringType()),
 ])
 
-debezium_schema = StructType([
+debezium_order_schema = StructType([
     StructField("payload", StructType([
         StructField("after", order_schema),
         StructField("op", StringType()),
     ]))
 ])
 
-df = spark.readStream \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", "kafka:9092") \
-    .option("subscribe", "ecom.public.orders") \
-    .option("startingOffsets", "latest") \
-    .load()
+# USERS
+user_schema = StructType([
+    StructField("user_id", LongType()),
+    StructField("full_name", StringType()),
+    StructField("city", StringType()),
+    StructField("created_at", StringType()),
+])
 
-parsed = df.select(
-    from_json(col("value").cast("string"), debezium_schema).alias("data")
-).select(
-    col("data.payload.op").alias("op"),
-    col("data.payload.after.*")
-).filter(col("op").isin("c", "u"))
+debezium_user_schema = StructType([
+    StructField("payload", StructType([
+        StructField("after", user_schema),
+        StructField("op", StringType()),
+    ]))
+])
 
+# PRODUCTS
+product_schema = StructType([
+    StructField("product_id", LongType()),
+    StructField("name", StringType()),
+    StructField("category", StringType()),
+    StructField("price", StringType()),
+])
+
+debezium_product_schema = StructType([
+    StructField("payload", StructType([
+        StructField("after", product_schema),
+        StructField("op", StringType()),
+    ]))
+])
+
+# ORDER ITEMS
+order_item_schema = StructType([
+    StructField("order_item_id", LongType()),
+    StructField("order_id", LongType()),
+    StructField("product_id", LongType()),
+    StructField("quantity", LongType()),
+    StructField("unit_price", StringType()),
+])
+
+debezium_order_item_schema = StructType([
+    StructField("payload", StructType([
+        StructField("after", order_item_schema),
+        StructField("op", StringType()),
+    ]))
+])
+
+# Iceberg tabloları oluştur
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.orders (
-        op STRING,
-        order_id BIGINT,
-        user_id BIGINT,
-        status STRING,
-        total_amount STRING,
-        created_at STRING
-    )
-    USING iceberg
+        op STRING, order_id BIGINT, user_id BIGINT,
+        status STRING, total_amount STRING, created_at STRING
+    ) USING iceberg
 """)
 
-def write_to_iceberg(batch_df, batch_id):
-    if batch_df.count() > 0:
-        batch_df.writeTo("lakehouse.bronze.orders").append()
-        print(f"Batch {batch_id}: {batch_df.count()} kayit yazildi")
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS lakehouse.bronze.users (
+        op STRING, user_id BIGINT, full_name STRING,
+        city STRING, created_at STRING
+    ) USING iceberg
+""")
 
-query = parsed.writeStream \
-    .foreachBatch(write_to_iceberg) \
-    .option("checkpointLocation", "s3a://lakehouse/checkpoints/orders") \
-    .start()
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS lakehouse.bronze.products (
+        op STRING, product_id BIGINT, name STRING,
+        category STRING, price STRING
+    ) USING iceberg
+""")
 
-query.awaitTermination()
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS lakehouse.bronze.order_items (
+        op STRING, order_item_id BIGINT, order_id BIGINT,
+        product_id BIGINT, quantity BIGINT, unit_price STRING
+    ) USING iceberg
+""")
+
+def make_stream(topic, schema):
+    return spark.readStream \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", "kafka:9092") \
+        .option("subscribe", topic) \
+        .option("startingOffsets", "earliest") \
+        .load() \
+        .select(from_json(col("value").cast("string"), schema).alias("data")) \
+        .select(col("data.payload.op").alias("op"), col("data.payload.after.*")) \
+        .filter(col("op").isin("c", "u", "r"))
+
+orders_df = make_stream("ecom.public.orders", debezium_order_schema)
+users_df = make_stream("ecom.public.users", debezium_user_schema)
+products_df = make_stream("ecom.public.products", debezium_product_schema)
+order_items_df = make_stream("ecom.public.order_items", debezium_order_item_schema)
+
+def write_to_iceberg(table_name):
+    def inner(batch_df, batch_id):
+        if batch_df.count() > 0:
+            batch_df.writeTo(table_name).append()
+            print(f"[{table_name}] Batch {batch_id}: {batch_df.count()} kayit yazildi")
+    return inner
+
+q1 = orders_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.orders")) \
+    .option("checkpointLocation", "s3a://lakehouse/checkpoints/orders").start()
+
+q2 = users_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.users")) \
+    .option("checkpointLocation", "s3a://lakehouse/checkpoints/users").start()
+
+q3 = products_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.products")) \
+    .option("checkpointLocation", "s3a://lakehouse/checkpoints/products").start()
+
+q4 = order_items_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.order_items")) \
+    .option("checkpointLocation", "s3a://lakehouse/checkpoints/order_items").start()
+
+spark.streams.awaitAnyTermination()
