@@ -1,0 +1,19 @@
+{
+  "name": "ecommerce-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "ecommerce",
+    "topic.prefix": "ecom",
+    "plugin.name": "pgoutput",
+    "publication.autocreate.mode": "filtered",
+    "slot.name": "debezium_slot",
+    "table.include.list": "public.users,public.products,public.inventory,public.orders,public.order_items",
+    "tombstones.on.delete": "false",
+    "decimal.handling.mode": "string"
+  }
+}
