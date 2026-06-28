@@ -1,6 +1,8 @@
 WITH source AS (
     SELECT
         op,
+        lsn,
+        ts_ms,
         user_id,
         full_name,
         city,
@@ -12,7 +14,7 @@ deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY user_id
-            ORDER BY created_at DESC
+            ORDER BY lsn DESC, ts_ms DESC
         ) AS rn
     FROM source
 )

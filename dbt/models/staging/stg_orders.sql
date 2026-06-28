@@ -1,6 +1,8 @@
 WITH source AS (
     SELECT
         op,
+        lsn,
+        ts_ms,
         order_id,
         user_id,
         status,
@@ -10,11 +12,13 @@ WITH source AS (
     WHERE op IN ('c', 'u')
 ),
 
+-- Bir order_id icin CREATED ve PAID/CANCELLED satirlari ayni created_at'e
+-- sahip oldugundan, en guncel versiyonu Debezium WAL LSN'ine gore seciyoruz.
 deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY order_id
-            ORDER BY created_at DESC
+            ORDER BY lsn DESC, ts_ms DESC
         ) AS rn
     FROM source
 )

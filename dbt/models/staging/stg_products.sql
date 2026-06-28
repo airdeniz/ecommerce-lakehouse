@@ -1,6 +1,8 @@
 WITH source AS (
     SELECT
         op,
+        lsn,
+        ts_ms,
         product_id,
         name,
         category,
@@ -12,7 +14,7 @@ deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY product_id
-            ORDER BY product_id
+            ORDER BY lsn DESC, ts_ms DESC
         ) AS rn
     FROM source
 )

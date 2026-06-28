@@ -20,6 +20,14 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("WARN")
 
+# Debezium source metadata: lsn = WAL log sequence number (monoton artan,
+# her degisiklik icin tekil -> CDC olaylarini siralamanin kanonik yolu).
+# ts_ms = commit zamani (lsn yoksa yedek siralama anahtari).
+source_schema = StructType([
+    StructField("lsn", LongType()),
+    StructField("ts_ms", LongType()),
+])
+
 # ORDERS
 order_schema = StructType([
     StructField("order_id", LongType()),
@@ -32,6 +40,7 @@ order_schema = StructType([
 debezium_order_schema = StructType([
     StructField("payload", StructType([
         StructField("after", order_schema),
+        StructField("source", source_schema),
         StructField("op", StringType()),
     ]))
 ])
@@ -47,6 +56,7 @@ user_schema = StructType([
 debezium_user_schema = StructType([
     StructField("payload", StructType([
         StructField("after", user_schema),
+        StructField("source", source_schema),
         StructField("op", StringType()),
     ]))
 ])
@@ -62,6 +72,7 @@ product_schema = StructType([
 debezium_product_schema = StructType([
     StructField("payload", StructType([
         StructField("after", product_schema),
+        StructField("source", source_schema),
         StructField("op", StringType()),
     ]))
 ])
@@ -78,35 +89,40 @@ order_item_schema = StructType([
 debezium_order_item_schema = StructType([
     StructField("payload", StructType([
         StructField("after", order_item_schema),
+        StructField("source", source_schema),
         StructField("op", StringType()),
     ]))
 ])
 
-# Iceberg tabloları oluştur
+# Iceberg tablolari olustur (lsn + ts_ms ile -> downstream dedup icin)
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.orders (
-        op STRING, order_id BIGINT, user_id BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT,
+        order_id BIGINT, user_id BIGINT,
         status STRING, total_amount STRING, created_at STRING
     ) USING iceberg
 """)
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.users (
-        op STRING, user_id BIGINT, full_name STRING,
+        op STRING, lsn BIGINT, ts_ms BIGINT,
+        user_id BIGINT, full_name STRING,
         city STRING, created_at STRING
     ) USING iceberg
 """)
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.products (
-        op STRING, product_id BIGINT, name STRING,
+        op STRING, lsn BIGINT, ts_ms BIGINT,
+        product_id BIGINT, name STRING,
         category STRING, price STRING
     ) USING iceberg
 """)
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.order_items (
-        op STRING, order_item_id BIGINT, order_id BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT,
+        order_item_id BIGINT, order_id BIGINT,
         product_id BIGINT, quantity BIGINT, unit_price STRING
     ) USING iceberg
 """)
@@ -119,7 +135,12 @@ def make_stream(topic, schema):
         .option("startingOffsets", "earliest") \
         .load() \
         .select(from_json(col("value").cast("string"), schema).alias("data")) \
-        .select(col("data.payload.op").alias("op"), col("data.payload.after.*")) \
+        .select(
+            col("data.payload.op").alias("op"),
+            col("data.payload.source.lsn").alias("lsn"),
+            col("data.payload.source.ts_ms").alias("ts_ms"),
+            col("data.payload.after.*"),
+        ) \
         .filter(col("op").isin("c", "u", "r"))
 
 orders_df = make_stream("ecom.public.orders", debezium_order_schema)
@@ -129,9 +150,14 @@ order_items_df = make_stream("ecom.public.order_items", debezium_order_item_sche
 
 def write_to_iceberg(table_name):
     def inner(batch_df, batch_id):
-        if batch_df.count() > 0:
-            batch_df.writeTo(table_name).append()
-            print(f"[{table_name}] Batch {batch_id}: {batch_df.count()} kayit yazildi")
+        batch_df.persist()
+        try:
+            n = batch_df.count()
+            if n > 0:
+                batch_df.writeTo(table_name).append()
+                print(f"[{table_name}] Batch {batch_id}: {n} kayit yazildi")
+        finally:
+            batch_df.unpersist()
     return inner
 
 q1 = orders_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.orders")) \
