@@ -128,6 +128,8 @@ services:
       - "4041:4040"
     command: >
       bash -c "/opt/spark/sbin/start-thriftserver.sh
+      --driver-memory 2g
+      --driver-java-options -XX:TieredStopAtLevel=1
       --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
       --conf spark.sql.catalog.lakehouse=org.apache.iceberg.spark.SparkCatalog
       --conf spark.sql.catalog.lakehouse.catalog-impl=org.apache.iceberg.jdbc.JdbcCatalog
