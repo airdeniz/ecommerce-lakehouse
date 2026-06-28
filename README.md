@@ -227,6 +227,32 @@ target.
 - [x] Phase 5 — Dashboard: Superset
 - [x] Phase 6 — Persistence: Kafka + Superset Postgres metadata
 
+## Known Limitations & Production Roadmap
+
+This is a portfolio project running on a single machine with Docker Compose.
+The following items are **deliberate trade-offs** — documented here to show
+awareness, not as oversights.
+
+**Full refresh materialization.** Silver and gold tables are rebuilt from
+scratch on every `dbt run`. The staging views scan the **entire** bronze layer
+each time, so yesterday's data is reprocessed alongside today's. This is the
+safest approach for correctness — every run produces a deterministic result
+regardless of prior state — but it does not scale. At production volume
+(millions of events/day), this should migrate to **dbt incremental
+materialization**: `is_incremental()` filters bronze to only events newer than
+the last run, and `MERGE INTO` upserts changed rows into the existing silver
+table. The `unique_key` would be the business key (e.g. `order_id`), and the
+`ts_ms` column already in bronze serves as the high-water mark.
+
+**MinIO bucket not auto-created.** After `docker compose down -v` the
+`lakehouse` bucket must be created manually
+(`docker exec ecom-minio mc mb local/lakehouse`). A dedicated `minio-init`
+service should handle this automatically on startup.
+
+**Hardcoded credentials.** MinIO and Iceberg DB credentials are inline in
+`orders_stream.py` and `docker-compose.yml`. In production these would come
+from environment variables or a secrets manager.
+
 ## Getting Started
 
 ### Prerequisites
