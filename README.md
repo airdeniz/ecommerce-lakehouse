@@ -172,6 +172,39 @@ Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `lakehouse
 | Silver | `lakehouse.silver` | Iceberg (MinIO, JDBC catalog) | dbt (nightly) |
 | Gold | `lakehouse.gold` | Iceberg (MinIO, JDBC catalog) | dbt (nightly) |
 
+**Why layers at all?** Most source systems are **mutable** — an OLTP database
+overwrites old values on every UPDATE. When an order moves from CREATED to
+PAID, the CREATED state is gone forever in Postgres. CDC captures every change
+before it disappears, but the captured events need to be organized. Raw events
+go to bronze; cleaned, deduplicated rows go to silver; business-ready
+aggregates go to gold. Each layer serves a different audience and a different
+purpose.
+
+**Bronze — raw, append-only, complete history.** Every CDC event lands here
+exactly as Debezium emitted it: `op`, `lsn`, `ts_ms`, and the full
+`payload.after`. The same `order_id` appears multiple times — once for
+CREATED, once for PAID, maybe once for CANCELLED. Nothing is updated, nothing
+is deleted. This is the source of truth for the entire pipeline; every
+downstream layer can be rebuilt from bronze. It exists because the mutable
+source database does not preserve history — bronze does.
+
+**Staging — views that deduplicate.** Lightweight SQL views (not physical
+tables) that read bronze, apply `ROW_NUMBER() OVER (PARTITION BY order_id
+ORDER BY lsn DESC)`, and expose only the latest version of each row. They
+vanish on Spark restart and are re-created by `dbt run` — by design, since
+they cost nothing to rebuild.
+
+**Silver — cleaned, enriched, business-entity tables.** Materialized Iceberg
+tables that join staged data (orders + users, order\_items + products), apply
+business rules (`WHERE status != 'CREATED'`), and add derived columns
+(`paid_amount`, `is_cancelled`). One row per business entity. This is where
+analysts start querying.
+
+**Gold — aggregated, report-ready tables.** Pre-computed metrics:
+`mart_daily_revenue` (daily totals), `mart_sales_by_category` (category
+breakdown). Superset dashboards read from gold. These tables answer recurring
+business questions without requiring analysts to write complex joins.
+
 ## Handling Updates: CDC Event Ordering
 
 In a CDC pipeline a single row changes over time. An order moves
