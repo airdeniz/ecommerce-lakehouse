@@ -71,6 +71,13 @@ models:
           - relationships:
               to: ref('stg_orders')
               field: order_id
+              # Bronze'da orders ve order_items bagimsiz akislar olarak yazilir;
+              # akisin kuyrugunda en yeni order_item'lar, parent order'lari henuz
+              # yazilmadan once gorunebilir (eventual consistency). Beklenen kuyruk
+              # gecikmesinde uyari ver, sadece yapisal kirilmada (>500) hata ver.
+              config:
+                warn_if: ">0"
+                error_if: ">500"
       - name: product_id
         data_tests:
           - not_null

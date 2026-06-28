@@ -48,6 +48,11 @@ models:
           - relationships:
               to: ref('stg_orders')
               field: order_id
+              # Bagimsiz streaming akislari arasinda kuyruk gecikmesi beklenir;
+              # uyari ver, sadece yapisal kirilmada (>500) hata ver.
+              config:
+                warn_if: ">0"
+                error_if: ">500"
       - name: product_id
         data_tests:
           - not_null

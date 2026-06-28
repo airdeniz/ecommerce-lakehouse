@@ -207,6 +207,17 @@ This is the canonical way to order CDC events. It keeps the source schema
 untouched — no need to add an `updated_at` column to the OLTP database, which
 you often cannot modify in production anyway.
 
+### Streaming Referential Consistency
+
+`orders` and `order_items` are written to bronze as **independent streams**
+with separate microbatches and checkpoints. At any instant the tail of one
+stream can lead the other, so the newest order lines may briefly reference an
+order that has not landed yet. This is normal eventual consistency, not a bug —
+so the `order_id` referential-integrity tests are configured to **warn** on the
+expected tail lag (`warn_if: ">0"`) and only **fail** on structural breakage
+(`error_if: ">500"`), instead of demanding perfect consistency on a moving
+target.
+
 ## Project Phases
 
 - [x] Phase 1 — CDC Pipeline: Postgres + Debezium + Kafka + Order Generator
