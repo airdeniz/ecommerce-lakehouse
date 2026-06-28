@@ -59,9 +59,9 @@ flowchart TB
 
     subgraph LAKEHOUSE["Lakehouse - MinIO"]
         B[("Bronze<br/>lakehouse.bronze.*<br/>Iceberg tables")]
-        ST[("Staging - views<br/>ecommerce_staging")]
-        SL[("Silver - tables<br/>ecommerce_silver<br/>core_orders, core_order_items")]
-        GD[("Gold - tables<br/>ecommerce_gold<br/>mart_daily_revenue<br/>mart_sales_by_category")]
+        ST[("Staging - views<br/>staging.*")]
+        SL[("Silver - tables<br/>lakehouse.silver<br/>core_orders, core_order_items")]
+        GD[("Gold - tables<br/>lakehouse.gold<br/>mart_daily_revenue<br/>mart_sales_by_category")]
         S -->|writeStream foreachBatch| B
         B --> ST
         ST --> SL
@@ -81,6 +81,11 @@ flowchart TB
         SUP[Superset<br/>Postgres metadata]
         SUP -->|hive://spark-thrift:10000| TH
     end
+
+    subgraph OPS["Monitoring — not in data flow"]
+        RC[Redpanda Console<br/>port 8081]
+    end
+    RC -.->|topic inspection| K
 ```
 
 ## Component Breakdown
@@ -140,9 +145,9 @@ JDBC/ODBC endpoint exposing Spark SQL on port 10000.
 
 **dbt Core 1.8 (`dbt/`)**
 Transformation layer running SQL models in three layers:
-- `staging` → views (ecommerce_staging)
-- `core` → silver tables (ecommerce_silver)
-- `mart` → gold tables (ecommerce_gold)
+- `staging` → views (staging)
+- `core` → silver tables (lakehouse.silver)
+- `mart` → gold tables (lakehouse.gold)
 
 *Why:* Raw bronze data isn't analytics-ready. dbt provides modeling, testing, documentation, and lineage — the industry standard.
 
@@ -155,7 +160,7 @@ Runs `dbt_pipeline` DAG every night at 02:00. Two tasks: `dbt_run` → `dbt_test
 ### Visualization
 
 **Apache Superset**
-Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `ecommerce_gold` tables.
+Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `lakehouse.gold` tables.
 *Why:* Closes the loop — business users see charts, not SQL. Metadata stored in a dedicated Postgres database (`superset-db`) for persistence across restarts.
 
 ## Data Layers
@@ -163,7 +168,7 @@ Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `ecommerce
 | Layer | Schema | Storage | Updated By |
 |-------|--------|---------|------------|
 | Bronze | `lakehouse.bronze` | Iceberg (MinIO, JDBC catalog) | PySpark streaming (continuous) |
-| Staging | `ecommerce_staging` | Spark views (in-memory) | dbt (nightly) |
+| Staging | `staging` | Spark views (in-memory) | dbt (nightly) |
 | Silver | `lakehouse.silver` | Iceberg (MinIO, JDBC catalog) | dbt (nightly) |
 | Gold | `lakehouse.gold` | Iceberg (MinIO, JDBC catalog) | dbt (nightly) |
 
