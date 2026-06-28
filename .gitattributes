@@ -1,5 +1,2 @@
-# Shell scripts must keep LF line endings (they run in Linux containers)
-*.sh text eol=lf
-
-# Dockerfile must keep LF
+﻿*.sh text eol=lf
 Dockerfile text eol=lf
