@@ -249,6 +249,43 @@ the last run, and `MERGE INTO` upserts changed rows into the existing silver
 table. The `unique_key` would be the business key (e.g. `order_id`), and the
 `ts_ms` column already in bronze serves as the high-water mark.
 
+## Data Retention & Storage Management
+
+Data flows through several storage layers, each with its own retention
+characteristics. No business data is ever lost — retention policies only
+reclaim temporary or superseded storage, not source-of-truth records.
+
+**Kafka (7-day replay window).** Topic retention defaults to
+`retention.ms=604800000` (7 days). After 7 days, consumed messages are deleted
+from the broker. This is safe because every event has already been written to
+Iceberg bronze by PySpark. Kafka is a transit buffer, not long-term storage.
+If PySpark needs to reprocess, it replays from Kafka within the 7-day window;
+for anything older, bronze is the authoritative source.
+
+**Iceberg snapshot expiration.** Every `dbt run` creates a new table snapshot —
+a pointer to the set of Parquet files that represent the table at that moment.
+Over time, snapshots accumulate. `expire_snapshots` removes old snapshots and
+deletes Parquet files that are **no longer referenced by any remaining
+snapshot**. Critically, the **current snapshot and its data are never touched**.
+You lose the ability to time-travel to an expired point in time, but all
+current rows remain intact. Think of it as clearing version history in a
+document — the document itself stays, only the undo stack shrinks.
+
+**Bronze is never deleted.** Bronze tables are append-only and live on cheap
+object storage (MinIO / S3). They are the source of truth for the entire
+pipeline. Silver and gold are derived — they can always be rebuilt from bronze
+with `dbt run --full-refresh`. Deleting bronze would make reprocessing,
+bug-fixing, and adding new columns to historical data impossible. The storage
+cost of retaining bronze indefinitely (pennies per GB/month on S3) is
+negligible compared to the cost of losing the ability to reprocess.
+
+| Layer | What gets cleaned | What stays | Risk of deletion |
+|-------|-------------------|------------|------------------|
+| Kafka | Messages older than retention window | — | None — already in bronze |
+| Iceberg snapshots | Old metadata + orphaned Parquet files | Current table state | Lose time travel only |
+| Bronze | **Never** | All CDC events, all time | — |
+| Silver / Gold | Rebuilt on every `dbt run` | Current transformed state | Rebuilt from bronze |
+
 ## Getting Started
 
 ### Prerequisites
