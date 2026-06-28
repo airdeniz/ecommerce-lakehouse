@@ -188,12 +188,34 @@ is deleted. This is the source of truth for the entire pipeline; every
 downstream layer can be rebuilt from bronze. It exists because the mutable
 source database does not preserve history — bronze does.
 
-*Without bronze:* silver and gold would keep serving current reports, but
-`dbt run` would fail the next night (staging reads bronze), bug fixes
-requiring `--full-refresh` would be impossible (no raw data to reprocess), and
-adding a new column to historical data (e.g. enriching past orders with user
-city) could not be back-filled. Bronze is cheap insurance — pennies per
-GB/month on object storage — against irreversible data loss.
+*Without bronze, today nothing breaks* — silver and gold tables live in their
+own Parquet files, reports keep working. But tomorrow the damage starts:
+
+- *Nightly pipeline breaks.* `dbt run` fails because staging views read from
+  `{{ source('bronze', 'orders') }}`. No bronze → no staging → no silver → no
+  gold. Reports freeze at the last successful run.
+- *Bug fixes become impossible.* You discover `paid_amount` has been
+  miscalculated for 3 months. You fix the dbt model and run
+  `dbt run --full-refresh` — but full refresh rebuilds silver from bronze. No
+  bronze, no fix. You are stuck with 3 months of wrong revenue numbers.
+- *New columns cannot be back-filled.* Business asks "show me cancellations by
+  city." You need to join orders with user city — that enrichment comes from
+  bronze `users` events. Without bronze you can only start from today; the last
+  6 months of orders have no city.
+- *New metrics cannot be computed retroactively.* "What was our average
+  order-to-payment time last quarter?" requires both the CREATED and PAID
+  events for the same order — bronze has both as separate rows. Silver only
+  keeps the final state (PAID); the CREATED timestamp is there but the
+  intermediate event history is lost. Gold has daily aggregates — individual
+  order timing is gone entirely.
+- *Audit and compliance gaps.* "Prove that order #12345 was CREATED before it
+  was CANCELLED." Bronze has both events with WAL LSN timestamps. Silver has
+  only the latest state. If a regulator or finance team asks for the sequence
+  of state changes, only bronze can answer.
+
+Bronze is cheap insurance — pennies per GB/month on object storage — against
+all of the above. You rarely read old bronze data day-to-day, but when you
+need it, nothing else can substitute.
 
 **Staging — views that deduplicate.** Lightweight SQL views (not physical
 tables) that read bronze, apply `ROW_NUMBER() OVER (PARTITION BY order_id
