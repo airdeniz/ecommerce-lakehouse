@@ -188,6 +188,13 @@ is deleted. This is the source of truth for the entire pipeline; every
 downstream layer can be rebuilt from bronze. It exists because the mutable
 source database does not preserve history — bronze does.
 
+*Without bronze:* silver and gold would keep serving current reports, but
+`dbt run` would fail the next night (staging reads bronze), bug fixes
+requiring `--full-refresh` would be impossible (no raw data to reprocess), and
+adding a new column to historical data (e.g. enriching past orders with user
+city) could not be back-filled. Bronze is cheap insurance — pennies per
+GB/month on object storage — against irreversible data loss.
+
 **Staging — views that deduplicate.** Lightweight SQL views (not physical
 tables) that read bronze, apply `ROW_NUMBER() OVER (PARTITION BY order_id
 ORDER BY lsn DESC)`, and expose only the latest version of each row. They
