@@ -32,7 +32,7 @@ flowchart LR
     DBT -->|transform| MINIO
     AIRFLOW[Airflow<br/>nightly DAG] -.->|trigger| DBT
     THRIFT --> SUPERSET[Superset Dashboard]
-    CONSOLE[Redpanda Console] -.->|monitor| KAFKA
+    KAFKA -.->|monitored by| CONSOLE[Redpanda Console]
 ```
 
 ## Low-Level Data Flow
@@ -92,7 +92,7 @@ flowchart TB
     subgraph OPS["Monitoring — not in data flow"]
         RC[Redpanda Console<br/>port 8081]
     end
-    RC -.->|topic inspection| K
+    K -.->|inspected by| RC
 ```
 
 ## Component Breakdown
