@@ -14,6 +14,7 @@ This pipeline shows how to do that end-to-end:
 - **Transform data in layers** (bronze → silver → gold) with dbt, so analysts get clean, business-ready tables and engineers keep raw data available for reprocessing.
 - **Run transformations on a schedule** with Airflow, so the analytics tables are always fresh by morning.
 - **Visualize results** with Superset, so business users see charts instead of SQL.
+- **Query the warehouse in plain language** through an **MCP server**, so an AI agent (e.g. Claude Desktop) can answer questions like *"who are my top 5 customers by spend?"* — discovering the schema and writing the SQL itself, read-only.
 
 In short: it shows how to build the **same data infrastructure that companies like Trendyol, Hepsiburada or n11 run in production** — but with open-source tools and a single `docker compose up`.
 
@@ -32,6 +33,8 @@ flowchart LR
     DBT -->|transform| MINIO
     AIRFLOW[Airflow<br/>nightly DAG] -.->|trigger| DBT
     THRIFT --> SUPERSET[Superset Dashboard]
+    THRIFT --> MCP[MCP Server]
+    MCP -->|natural-language Q&A| AGENT[AI Agent<br/>Claude Desktop]
     CONSOLE[Redpanda Console]
     KAFKA -.->|monitored by| CONSOLE
 ```
@@ -175,6 +178,12 @@ Runs `dbt_pipeline` DAG every night at 02:00. Two tasks: `dbt_run` → `dbt_test
 Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `lakehouse.gold` tables.
 *Why:* Closes the loop — business users see charts, not SQL. Metadata stored in a dedicated Postgres database (`superset-db`) for persistence across restarts.
 
+### AI Access Layer
+
+**MCP Server (`mcp-server/server.py`)**
+A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the lakehouse to an AI agent such as Claude Desktop. It runs as a container in the pipeline network and reaches the warehouse through Spark Thrift, offering three tools: `list_tables`, `describe_table`, and `run_query` (read-only — DDL/DML is rejected).
+*Why:* Lets a non-technical user ask questions in plain language — *"which category sold the most?"*, *"find my top 5 customers by spend"* — and the agent discovers the schema and writes the SQL itself. The agent also applies business judgement: asked for "most valuable customers", it excludes cancelled and unpaid orders on its own, counting only realised (PAID) revenue. This turns the gold layer into a conversational analytics interface without building a custom NL-to-SQL service. See [mcp-server/README.md](mcp-server/README.md) for setup.
+
 ## Design Deep-Dive
 
 The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
@@ -196,6 +205,7 @@ The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
 - [x] Phase 5 — Dashboard: Superset
 - [x] Phase 6 — Persistence: Kafka + Superset Postgres metadata
 - [x] Phase 7 — Multiple Consumers: stock monitoring service (Kafka fan-out)
+- [x] Phase 8 — AI Access Layer: MCP server for natural-language querying (Claude Desktop)
 
 ## Known Limitations & Production Roadmap
 
@@ -257,6 +267,7 @@ Then connect Superset to Spark Thrift Server:
 | Postgres | localhost:5433 | postgres / postgres | — |
 | Iceberg Catalog DB | internal only | iceberg / iceberg | `iceberg_db_data` |
 | Kafka | localhost:29092 | — | `kafka_data` |
+| MCP Server | internal (via `docker exec`) | — | — |
 
 > Debezium connector is registered automatically on startup via the `connector-init` service.
 > `docker compose down` (without `-v`) preserves all data via named volumes.
