@@ -32,7 +32,8 @@ flowchart LR
     DBT -->|transform| MINIO
     AIRFLOW[Airflow<br/>nightly DAG] -.->|trigger| DBT
     THRIFT --> SUPERSET[Superset Dashboard]
-    KAFKA -.->|monitored by| CONSOLE[Redpanda Console]
+    CONSOLE[Redpanda Console]
+    KAFKA -.->|monitored by| CONSOLE
 ```
 
 ## Low-Level Data Flow
