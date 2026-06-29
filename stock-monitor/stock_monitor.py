@@ -48,6 +48,9 @@ KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 INVENTORY_TOPIC = os.environ.get("INVENTORY_TOPIC", "ecom.public.inventory")
 # Stok bu esigin altina dustugunde uyari uretilir
 LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))
+# earliest = servis yeniden baslayinca kacirdigi stok degisikliklerini de okur
+# latest   = sadece servis bagliyken gelen yeni event'leri okur
+AUTO_OFFSET_RESET = os.environ.get("AUTO_OFFSET_RESET", "earliest")
 
 # Ayni urun icin tekrar tekrar uyari uretmemek icin basit bir hafiza.
 # (Prod'da bu Redis/DB'de tutulur; burada bellek ici yeterli.)
@@ -93,7 +96,7 @@ def main():
         bootstrap_servers=KAFKA_BOOTSTRAP,
         # PySpark'tan BAGIMSIZ consumer group -> ayni topic'i bagimsiz okuruz
         group_id="stock-monitor-service",
-        auto_offset_reset="latest",
+        auto_offset_reset=AUTO_OFFSET_RESET,
         enable_auto_commit=True,
         value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m else None,
     )
