@@ -1,0 +1,4 @@
+mcp>=1.2.0
+PyHive==0.7.0
+thrift==0.16.0
+thrift_sasl==0.4.3

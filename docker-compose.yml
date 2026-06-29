@@ -319,6 +319,21 @@ services:
       timeout: 5s
       retries: 10
 
+  # MCP server: lakehouse'u bir AI agent'a (Claude Desktop) acar.
+  # Container surekli ayakta durur; Claude Desktop "docker exec -i ecom-mcp-server
+  # python server.py" ile stdio modunda baglanir. Server, Spark Thrift uzerinden
+  # bronze/silver/gold tablolarina SALT-OKUMA SQL atar.
+  mcp-server:
+    build: ./mcp-server
+    container_name: ecom-mcp-server
+    depends_on:
+      spark-thrift:
+        condition: service_started
+    environment:
+      THRIFT_HOST: spark-thrift
+      THRIFT_PORT: "10000"
+      LAKEHOUSE_CATALOG: lakehouse
+
 volumes:
   minio_data:
   airflow_db_data:
