@@ -1,5 +1,5 @@
--- Ciro hicbir gun negatif olmamali.
--- Bir satir donerse test BASARISIZ olur.
+-- Revenue must never be negative on any day.
+-- If any row is returned, the test FAILS.
 SELECT
     order_date,
     total_revenue

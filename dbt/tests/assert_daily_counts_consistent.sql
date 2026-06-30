@@ -1,7 +1,7 @@
--- Mantik tutarliligi:
---   iptal sayisi <= toplam siparis
---   tekil musteri sayisi <= toplam siparis
--- Bu kosullari ihlal eden bir gun donerse test BASARISIZ olur.
+-- Logical consistency:
+--   cancelled count <= total orders
+--   unique customers <= total orders
+-- If a day violating these is returned, the test FAILS.
 SELECT
     order_date,
     total_orders,

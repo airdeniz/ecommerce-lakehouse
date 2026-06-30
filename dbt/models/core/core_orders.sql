@@ -26,9 +26,9 @@ final AS (
         END AS is_cancelled
     FROM orders o
     LEFT JOIN users u ON o.user_id = u.user_id
-    -- CREATED dahil tum statuleri tutuyoruz: CREATED gecerli bir yasam dongusu
-    -- durumudur ve analiz edilebilir (ornegin odenmemis sepet analizi).
-    -- Silinen kayitlar is_deleted=true ile isaretli kalir (soft delete).
+    -- We keep all statuses including CREATED: CREATED is a valid lifecycle
+    -- state and can be analysed (e.g. unpaid-cart analysis).
+    -- Deleted records stay flagged with is_deleted=true (soft delete).
 )
 
 SELECT * FROM final

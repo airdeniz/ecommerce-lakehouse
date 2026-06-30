@@ -17,7 +17,7 @@ def main():
     cur.execute("SELECT product_id, price FROM products")
     products = cur.fetchall()
 
-    print("Siparis uretici basladi. Durdurmak icin Ctrl+C.")
+    print("Order generator started. Press Ctrl+C to stop.")
     while True:
         user_id = random.choice(user_ids)
         chosen = random.sample(products, k=random.randint(1, 3))
@@ -51,22 +51,22 @@ def main():
         elif roll < 0.85:
             cur.execute("UPDATE orders SET status = 'CANCELLED' WHERE order_id = %s", (order_id,))
 
-        print(f"Siparis {order_id} | kullanici {user_id} | tutar {round(total,2)} | {len(items)} kalem")
+        print(f"Order {order_id} | user {user_id} | amount {round(total,2)} | {len(items)} items")
 
-        # Ara sira (~%5) eski bir CANCELLED siparisi siliyoruz. Gercek hayatta
-        # iptal edilen siparisler bir sure sonra OLTP'den temizlenebilir.
-        # Bu, CDC delete (op='d') olaylarinin pipeline boyunca akmasini saglar;
-        # downstream'de is_deleted=true olarak yakalanir (soft delete).
+        # Occasionally (~5%) we delete an old CANCELLED order. In real life
+        # cancelled orders may be cleaned out of the OLTP after a while.
+        # This lets CDC delete (op='d') events flow through the pipeline;
+        # downstream they are captured as is_deleted=true (soft delete).
         if random.random() < 0.05:
             cur.execute(
                 "SELECT order_id FROM orders WHERE status = 'CANCELLED' ORDER BY random() LIMIT 1"
             )
             row = cur.fetchone()
             if row:
-                silinecek = row[0]
-                cur.execute("DELETE FROM order_items WHERE order_id = %s", (silinecek,))
-                cur.execute("DELETE FROM orders WHERE order_id = %s", (silinecek,))
-                print(f"  -> Siparis {silinecek} silindi (iptal temizligi)")
+                to_delete = row[0]
+                cur.execute("DELETE FROM order_items WHERE order_id = %s", (to_delete,))
+                cur.execute("DELETE FROM orders WHERE order_id = %s", (to_delete,))
+                print(f"  -> Order {to_delete} deleted (cancellation cleanup)")
 
         time.sleep(random.uniform(5.0, 7.0))
 

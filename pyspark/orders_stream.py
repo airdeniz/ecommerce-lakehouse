@@ -29,19 +29,20 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("WARN")
 
-# Iceberg bronze tablolari: HAM (raw) payload yaklasimi.
-# Her tablo ayni minimal sema:
-#   op, lsn, ts_ms  -> CDC metadata (dedup ve siralama icin)
-#   <pk>            -> dedup partition anahtari (JSON'dan her seferinde cikarmak
-#                      yerine ayri kolon -> performans + temiz PARTITION BY)
-#   raw_payload     -> Debezium payload'inin TAMAMI, JSON string olarak
+# Iceberg bronze tables: RAW payload approach.
+# Every table shares the same minimal schema:
+#   op, lsn, ts_ms  -> CDC metadata (for dedup and ordering)
+#   <pk>            -> dedup partition key (a separate column instead of
+#                      extracting it from JSON each time -> performance + clean PARTITION BY)
+#   raw_payload     -> the ENTIRE Debezium payload, as a JSON string
 #
-# NEDEN: kaynak tabloya yeni bir kolon eklendiginde bronze semasini hic
-# degistirmeden o kolon otomatik yakalanir (raw_payload icinde gelir).
-# Boylece "kullanmasak bile her seyi sakla" prensibi saglanir: ileride bir
-# kolona ihtiyac olursa gecmis veride de mevcuttur. Alanlar staging'de
-# get_json_object / JSON path ile cikarilir. Trade-off: okurken JSON parse
-# maliyeti, ama bronze "yakala-sakla" katmani; anlamlandirma yukari katmanda.
+# WHY: when a new column is added to the source table, that column is captured
+# automatically without changing the bronze schema at all (it arrives inside
+# raw_payload). This upholds the "store everything even if unused" principle:
+# if a column is needed later, it is already present in historical data too.
+# Fields are extracted in staging via get_json_object / JSON path. Trade-off:
+# JSON parse cost on read, but bronze is the "capture-and-store" layer;
+# interpretation happens in the upper layers.
 spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.bronze")
 
 spark.sql("""
@@ -76,21 +77,21 @@ spark.sql("""
     ) USING iceberg
 """)
 
-# Tum tablolar icin tek, delete-aware stream uretici.
-# Cikti: op, lsn, ts_ms, <pk>, raw_payload
-#   - op/lsn/ts_ms: CDC metadata (siralama + dedup)
-#   - pk: dedup partition anahtari; delete'te after NULL oldugu icin
-#         COALESCE(after.<pk>, before.<pk>) ile alinir
-#   - raw_payload: payload.after'in TAMAMI ham JSON string (delete'te after NULL
-#         oldugundan before kullanilir).
+# Single, delete-aware stream factory for all tables.
+# Output: op, lsn, ts_ms, <pk>, raw_payload
+#   - op/lsn/ts_ms: CDC metadata (ordering + dedup)
+#   - pk: dedup partition key; since after is NULL on a delete it is taken via
+#         COALESCE(after.<pk>, before.<pk>)
+#   - raw_payload: the ENTIRE payload.after as a raw JSON string (on a delete
+#         after is NULL, so before is used).
 #
-# ONEMLI: Kafka value'su HIC StructType ile parse EDILMIYOR. Onceden sabit
-# semayla (from_json) parse etseydik, semada olmayan yeni bir kolon (orn.
-# discount) parse sirasinda DUSER ve raw_payload'a hic giremezdi -> "her seyi
-# yakala" bozulurdu. Bunun yerine get_json_object ile JSON path'lerden gereken
-# alanlari ham olarak cekiyoruz; after/before'i da ham JSON string olarak
-# aliyoruz. Boylece kaynaga eklenen her yeni kolon, sema degisikligi olmadan
-# otomatik raw_payload'da yer alir.
+# IMPORTANT: the Kafka value is NEVER parsed into a StructType. If we parsed it
+# with a fixed schema (from_json), a new column not in the schema (e.g. discount)
+# would be DROPPED during parsing and never reach raw_payload -> "capture
+# everything" would break. Instead we pull the needed fields raw from JSON paths
+# via get_json_object, and take after/before as raw JSON strings too. This way
+# every new column added to the source ends up in raw_payload automatically,
+# with no schema change.
 def make_stream(topic, pk):
     return spark.readStream \
         .format("kafka") \
@@ -126,7 +127,7 @@ def write_to_iceberg(table_name):
             n = batch_df.count()
             if n > 0:
                 batch_df.writeTo(table_name).append()
-                print(f"[{table_name}] Batch {batch_id}: {n} kayit yazildi")
+                print(f"[{table_name}] Batch {batch_id}: {n} rows written")
         finally:
             batch_df.unpersist()
     return inner

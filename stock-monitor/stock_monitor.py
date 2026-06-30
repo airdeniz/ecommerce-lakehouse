@@ -1,39 +1,38 @@
 """
-Stok Izleme Servisi (Stock Monitoring Service)
+Stock Monitoring Service
 ================================================
 
-Bu servis bir Kafka CONSUMER'dir. Mevcut pipeline'a hicbir sekilde dokunmaz;
-Postgres, Debezium, Kafka veya PySpark'ta degisiklik gerektirmez. Sadece
-zaten akmakta olan `ecom.public.inventory` topic'ine yeni bir consumer group
-ile baglanir.
+This service is a Kafka CONSUMER. It does not touch the existing pipeline in any
+way; it requires no change to Postgres, Debezium, Kafka or PySpark. It simply
+connects to the already-flowing `ecom.public.inventory` topic with a new
+consumer group.
 
-ONEMLI KAVRAMSAL AYRIM:
------------------------
-Stok KONTROLU ve DUSURME islemi uygulama (OLTP) tarafinin isidir:
-  - Musteri "Siparis Ver" der
-  - Backend stok yeterli mi diye kontrol eder (stock_qty >= istenen mi?)
-  - Yeterliyse siparis olusturur + stok duser (UPDATE inventory ...)
-  - Yetmezse "stok yok" hatasi doner
-Bu tamamen transaction-time'da, milisaniyeler icinde gerceklesir. CDC'nin
-bundan haberi yoktur.
+IMPORTANT CONCEPTUAL DISTINCTION:
+---------------------------------
+Checking and DECREMENTING stock is the job of the application (OLTP) side:
+  - The customer clicks "Place Order"
+  - The backend checks whether stock is sufficient (stock_qty >= requested?)
+  - If sufficient, it creates the order + decrements stock (UPDATE inventory ...)
+  - If not, it returns an "out of stock" error
+This all happens at transaction-time, within milliseconds. CDC is unaware of it.
 
-Bu servis stok YONETMEZ; stok degisikliklerini IZLER. Karar zaten alinmistir,
-stok zaten dusmustur. Bu servis "birileri stokla ne yapti, bunu kimin bilmesi
-lazim" sorusunun cevabidir:
+This service does NOT manage stock; it OBSERVES stock changes. The decision has
+already been made and the stock has already been decremented. This service
+answers "someone did something with stock — who needs to know about it?":
 
-  1. UYARI / MONITORING — stok kritik esige duserse satin alma ekibine bildirim
-     (tedarikciye yeni siparis acmalari icin). Uygulama bunu yapmaz; onun isi
-     siparis almak, tedarik planlamasi degil.
+  1. ALERTING / MONITORING — if stock drops below a critical threshold, notify
+     the purchasing team (so they can reorder from the supplier). The app does
+     not do this; its job is taking orders, not supply planning.
 
-  2. ANALITIK — burn rate analizi: bir urun gunde kac adet eriyor, ne zaman
-     tukenecek? Bu gecmis OLTP'de yoktur (sadece guncel stok vardir); CDC
-     event akisinda vardir.
+  2. ANALYTICS — burn-rate analysis: how many units of a product sell per day,
+     when will it run out? This is not in the historical OLTP (which only has
+     current stock); it is in the CDC event stream.
 
-  3. SENKRONIZASYON — marketplace entegrasyonu, depo yonetim sistemi,
-     tedarikci portali gibi diger sistemlere stok degisikliklerini aktarmak.
-     Hepsi ayri ayri OLTP'ye baglanmak yerine bu topic'ten okur.
+  3. SYNCHRONIZATION — pushing stock changes to other systems like a marketplace
+     integration, a warehouse management system, or a supplier portal. Instead
+     of each connecting to the OLTP separately, they read from this topic.
 
-Bu basit ornek (1) numarali kullanim durumunu gosterir: dusuk stok uyarisi.
+This simple example demonstrates use case (1): a low-stock alert.
 """
 
 import os
@@ -46,22 +45,22 @@ from kafka import KafkaConsumer
 
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 INVENTORY_TOPIC = os.environ.get("INVENTORY_TOPIC", "ecom.public.inventory")
-# Stok bu esigin altina dustugunde uyari uretilir
+# An alert is produced when stock drops below this threshold
 LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))
-# earliest = servis yeniden baslayinca kacirdigi stok degisikliklerini de okur
-# latest   = sadece servis bagliyken gelen yeni event'leri okur
+# earliest = on restart, also reads the stock changes it missed while down
+# latest   = reads only new events that arrive while the service is connected
 AUTO_OFFSET_RESET = os.environ.get("AUTO_OFFSET_RESET", "earliest")
 
-# Ayni urun icin tekrar tekrar uyari uretmemek icin basit bir hafiza.
-# (Prod'da bu Redis/DB'de tutulur; burada bellek ici yeterli.)
+# Simple memory to avoid emitting the same alert repeatedly for one product.
+# (In prod this lives in Redis/DB; here in-memory is enough.)
 already_alerted = set()
 
 
 def handle_inventory_event(payload):
-    """Debezium envelope'undan stok degisikligini cikar ve degerlendir."""
+    """Extract the stock change from the Debezium envelope and evaluate it."""
     after = payload.get("after")
     if after is None:
-        # Silme (op=d) — urun envanterden cikti, ilgilenmiyoruz
+        # Delete (op=d) — the product left inventory; we do not care
         return
 
     product_id = after.get("product_id")
@@ -72,23 +71,23 @@ def handle_inventory_event(payload):
 
     if stock_qty < LOW_STOCK_THRESHOLD:
         if product_id not in already_alerted:
-            # Gercek hayatta burada Slack webhook / email / PagerDuty cagrilirdi:
+            # In real life a Slack webhook / email / PagerDuty would be called here:
             #   requests.post(SLACK_WEBHOOK, json={"text": ...})
             print(
-                f"[UYARI] Stok kritik seviyede! "
+                f"[ALERT] Stock critically low! "
                 f"product_id={product_id} stock_qty={stock_qty} "
-                f"(esik={LOW_STOCK_THRESHOLD}) -> satin alma ekibine bildir"
+                f"(threshold={LOW_STOCK_THRESHOLD}) -> notify purchasing team"
             )
             already_alerted.add(product_id)
     else:
-        # Stok tekrar normale dondu (yeniden stoklandi) -> uyari hafizasini temizle
+        # Stock back to normal (restocked) -> clear the alert memory
         already_alerted.discard(product_id)
 
 
 def main():
-    print(f"Stok izleme servisi basladi.")
+    print(f"Stock monitoring service started.")
     print(f"  Topic            : {INVENTORY_TOPIC}")
-    print(f"  Dusuk stok esigi : {LOW_STOCK_THRESHOLD}")
+    print(f"  Low-stock threshold : {LOW_STOCK_THRESHOLD}")
     print(f"  Consumer group   : stock-monitor-service")
 
     consumer = KafkaConsumer(

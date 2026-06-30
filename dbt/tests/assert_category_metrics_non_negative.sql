@@ -1,5 +1,5 @@
--- Kategori bazli metrikler negatif olamaz.
--- Bir satir donerse test BASARISIZ olur.
+-- Category-level metrics cannot be negative.
+-- If any row is returned, the test FAILS.
 SELECT
     category,
     total_quantity,

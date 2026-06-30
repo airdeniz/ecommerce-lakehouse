@@ -1,7 +1,7 @@
--- Mutabakat (reconciliation):
--- mart_daily_revenue.total_revenue, core_orders icindeki paid_amount toplamina
--- gun bazinda esit olmali. Kuruş yuvarlama toleransi 0.01.
--- Fark donerse test BASARISIZ olur -> gold ile silver tutarsiz demektir.
+-- Reconciliation:
+-- mart_daily_revenue.total_revenue must equal the sum of paid_amount in
+-- core_orders per day. Rounding tolerance is 0.01.
+-- If a difference is returned, the test FAILS -> gold and silver disagree.
 WITH mart AS (
     SELECT
         order_date,

@@ -1,10 +1,10 @@
 {#
-    dbt'nin varsayilan generate_schema_name macro'su, custom schema'lari
-    "{{target.schema}}_{{custom_schema}}" formatinda birlestirir; sonuc:
-    "ecommerce_lakehouse.silver" gibi gecersiz tablo adlari uretir.
+    dbt's default generate_schema_name macro joins custom schemas as
+    "{{target.schema}}_{{custom_schema}}", which produces invalid table names
+    like "ecommerce_lakehouse.silver".
 
-    Bu override custom schema verildiyse aynen kullanir, yoksa target.schema'ya
-    duser. Boylece "lakehouse.silver" three-part name dogrulu kalir.
+    This override uses the custom schema as-is when given, otherwise falls back
+    to target.schema. That keeps the "lakehouse.silver" three-part name correct.
 #}
 {% macro generate_schema_name(custom_schema_name, node) -%}
     {%- if custom_schema_name is none -%}

@@ -1,29 +1,29 @@
-# Apache'nin resmi Spark imajindan basliyoruz. Bu imajda Spark motoru, JVM,
-# PySpark ve temel JAR'lar hazir gelir; Spark'i sifirdan kurmuyoruz.
+# Start from Apache's official Spark image. It ships the Spark engine, JVM,
+# PySpark and the base JARs, so we don't install Spark from scratch.
 FROM apache/spark:3.5.1
 
-# Kurulum adimlari icin root'a geciyoruz (kutuphane kurmak, dosya indirmek
-# yetki ister). Spark imaji normalde guvenlik icin yetkisiz 'spark' kullanicisi
-# ile calisir; kurulum bitince tekrar ona donecegiz.
+# Switch to root for the install steps (installing libraries and downloading
+# files needs privileges). The Spark image normally runs as the unprivileged
+# 'spark' user; we switch back to it once the setup is done.
 USER root
 
-# Iki is birden yapiliyor:
-# 1) pip ile Python tarafina Kafka kutuphanesini ekliyoruz.
-# 2) Spark cekirdeginde OLMAYAN JAR'lari Maven deposundan indirip
-#    /opt/spark/jars/ altina koyuyoruz. Bu JAR'lar olmadan Spark cekirdegi
-#    Kafka'yi, Iceberg'i veya S3/MinIO'yu "tanimaz". Gruplar:
+# Two things happen here:
+# 1) pip installs the Kafka client library on the Python side.
+# 2) We download JARs that are NOT in the Spark core from the Maven repo into
+#    /opt/spark/jars/. Without these, Spark core does not "know" Kafka, Iceberg
+#    or S3/MinIO. The groups:
 #
 #    - spark-sql-kafka + kafka-clients + token-provider + commons-pool2:
-#        Spark'in Kafka'dan stream okuyabilmesi icin (pipeline'in girisi).
+#        so Spark can read a stream from Kafka (the pipeline's input).
 #    - iceberg-spark-runtime:
-#        Spark'in Iceberg tablo formatina yazip okuyabilmesi icin (bronze).
+#        so Spark can read/write the Iceberg table format (bronze).
 #    - aws-java-sdk-bundle + hadoop-aws:
-#        Spark'in MinIO'ya S3 protokolu uzerinden erisebilmesi icin (depolama).
+#        so Spark can reach MinIO over the S3 protocol (storage).
 #    - postgresql:
-#        Spark'in Postgres'e JDBC ile baglanabilmesi icin.
+#        so Spark can connect to Postgres over JDBC.
 #
-# JAR'lari runtime'da '--packages' ile indirmek yerine imaja GOMUYORUZ; boylece
-# container internet olmadan, tekrarlanabilir ve hizli sekilde ayaga kalkar.
+# We BAKE the JARs into the image instead of fetching them at runtime with
+# '--packages', so the container starts offline, reproducibly and fast.
 RUN pip install --no-cache-dir kafka-python==2.0.2 && \
     curl -o /opt/spark/jars/spark-sql-kafka-0-10_2.12-3.5.1.jar \
     https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.1/spark-sql-kafka-0-10_2.12-3.5.1.jar && \
@@ -42,9 +42,9 @@ RUN pip install --no-cache-dir kafka-python==2.0.2 && \
     curl -o /opt/spark/jars/postgresql-42.7.3.jar \
     https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar
 
-# Kurulum bitti; guvenlik icin tekrar yetkisiz 'spark' kullanicisina donuyoruz.
+# Setup done; switch back to the unprivileged 'spark' user for security.
 USER spark
 
-# Calisma dizinini ayarlayip kendi kodumuzu (orders_stream.py) imaja kopyaliyoruz.
+# Set the working directory and copy our own code (orders_stream.py) into the image.
 WORKDIR /app
 COPY . .
