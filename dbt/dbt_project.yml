@@ -17,6 +17,8 @@ on-run-start:
   # auto-create them.
   - "CREATE NAMESPACE IF NOT EXISTS lakehouse.ml_features"
   - "CREATE NAMESPACE IF NOT EXISTS lakehouse.ml"
+  # Static data dictionary lives in its own namespace.
+  - "CREATE NAMESPACE IF NOT EXISTS lakehouse.meta"
 
 models:
   ecommerce:
@@ -43,3 +45,10 @@ models:
       +materialized: table
       +file_format: iceberg
       +schema: lakehouse.ml_features
+    meta:
+      # Static data dictionary describing every table in the lakehouse (bronze
+      # through ml/ops). Hand-maintained literal rows, materialized as an Iceberg
+      # table so it is queryable from Thrift / Superset like any other table.
+      +materialized: table
+      +file_format: iceberg
+      +schema: lakehouse.meta

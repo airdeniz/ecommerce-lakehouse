@@ -102,7 +102,7 @@ docker compose stop generator pyspark stock-monitor connect
 docker exec ecom-airflow-scheduler dbt run  --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt
 docker exec ecom-airflow-scheduler dbt test --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt
 docker exec ecom-airflow-scheduler dbt run --select stg_orders --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt
-# healthy dbt run builds 11 models (8 core + 3 ml_features): PASS=11 WARN=0 ERROR=0
+# healthy dbt run builds 12 models (8 core + 3 ml_features + 1 meta): PASS=12 WARN=0 ERROR=0
 
 # ML jobs (after dbt has built lakehouse.ml_features); writes to lakehouse.ml.*
 docker exec ecom-airflow-scheduler airflow dags trigger ml_pipeline
