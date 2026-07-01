@@ -28,6 +28,7 @@ flowchart LR
     KAFKA -->|stream| SPARK[PySpark]
     KAFKA -->|inventory stream| STOCK[Stock Monitor<br/>low-stock alerts]
     SPARK -->|Iceberg write| MINIO[(MinIO<br/>Lakehouse)]
+    STOCK -->|Iceberg write<br/>stock_alerts| MINIO
     MINIO -->|read| THRIFT[Spark Thrift Server]
     THRIFT --> DBT[dbt Core]
     DBT -->|transform| MINIO
@@ -78,7 +79,9 @@ flowchart TB
         GD[("Gold - tables<br/>lakehouse.gold<br/>mart_daily_revenue<br/>mart_sales_by_category")]
         MLF[("ML Features<br/>lakehouse.ml_features<br/>order feats, customer RFM,<br/>hourly revenue")]
         MLO[("ML Outputs<br/>lakehouse.ml<br/>fraud_scores, demand_forecast,<br/>customer_segments, churn_predictions")]
+        OPS[("Ops<br/>lakehouse.ops.stock_alerts<br/>Iceberg table")]
         S -->|writeStream foreachBatch| B
+        SM -->|writeTo append<br/>on first crossing| OPS
         B --> ST
         ST --> SL
         SL --> GD
