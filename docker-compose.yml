@@ -97,10 +97,24 @@ services:
         condition: service_healthy
       connector-init:
         condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      iceberg-db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       INVENTORY_TOPIC: ecom.public.inventory
       LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-10}
+      # Persist alerts to lakehouse.ops.stock_alerts (set to "false" for console-only).
+      WRITE_ICEBERG_ALERTS: ${WRITE_ICEBERG_ALERTS:-true}
+      # Iceberg JDBC catalog + MinIO credentials — same vars the pyspark service uses.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      ICEBERG_DB_USER: ${ICEBERG_DB_USER}
+      ICEBERG_DB_PASSWORD: ${ICEBERG_DB_PASSWORD}
+      ICEBERG_DB_NAME: ${ICEBERG_DB_NAME}
 
   connector-init:
     image: curlimages/curl:8.6.0

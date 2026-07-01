@@ -148,7 +148,7 @@ Structured Streaming job that:
 *Why raw JSON:* Storing the whole payload instead of a fixed column list means a new source column is captured automatically — no bronze schema change, and the history is there when analytics eventually needs it. Fields are extracted from `raw_payload` in staging. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full rationale.
 
 **Stock Monitor (`stock-monitor/stock_monitor.py`)**
-A second, independent Kafka consumer (consumer group `stock-monitor-service`) that subscribes to `ecom.public.inventory` and raises a low-stock alert when a product drops below a threshold. Does not touch the analytics pipeline.
+A second, independent Kafka consumer (consumer group `stock-monitor-service`) that subscribes to `ecom.public.inventory` and raises a low-stock alert when a product drops below a threshold. Alerts are emitted to stdout **and** appended to the Iceberg table `lakehouse.ops.stock_alerts` (queryable from Superset/MCP; disable with `WRITE_ICEBERG_ALERTS=false`). Does not touch the analytics pipeline.
 *Why:* Demonstrates Kafka fan-out — the same CDC stream feeding multiple independent consumers. Adding it required no changes to Postgres, Debezium, Kafka, or PySpark. See "Multiple Consumers" below.
 
 ### Lakehouse

@@ -19,7 +19,7 @@ cheat sheet; `TROUBLESHOOTING.md` has failure-mode fixes.
 
 ```
 generator → Postgres (WAL) → Debezium → Kafka → PySpark → Iceberg bronze (MinIO)
-                                          └→ stock-monitor (independent consumer)
+                                          └→ stock-monitor (independent consumer → lakehouse.ops.stock_alerts)
 bronze → dbt (staging views → silver → gold) → Spark Thrift → Superset / MCP server
 ```
 

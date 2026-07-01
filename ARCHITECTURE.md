@@ -279,6 +279,23 @@ The example implementation (`stock-monitor/stock_monitor.py`) logs alerts to
 stdout; in production the alert path would call a Slack webhook, email, or
 PagerDuty.
 
+**Persisting alerts (`lakehouse.ops.stock_alerts`).** In addition to the stdout
+`[ALERT]` line, each low-stock crossing is appended to the Iceberg table
+`lakehouse.ops.stock_alerts` (`product_id`, `stock_qty`, `threshold`,
+`alert_time`) so alerts become queryable from Spark Thrift / Superset / the MCP
+server. The write reuses the **exact** JDBC-over-Postgres catalog + MinIO S3A
+config as the streaming job — deliberately, not PyIceberg: the Spark read path
+resolves Iceberg metadata via Hadoop `S3AFileSystem` (`s3a://` only), whereas
+PyIceberg writes `s3://` metadata locations, which the shared Thrift catalog
+could not open without reconfiguring the read path for every existing table.
+Atomic commits from the JDBC catalog make this a safe third concurrent writer
+alongside the bronze stream and dbt. The Kafka consumer loop stays on
+kafka-python and is unchanged; a local Spark session is used only to append the
+row, and the `already_alerted` spam-prevention set doubles as row de-duplication
+(one row per crossing, cleared on restock). The sink can be disabled with
+`WRITE_ICEBERG_ALERTS=false` for console-only behaviour. The new
+`lakehouse.ops` namespace must be added as a Superset dataset manually.
+
 ## Machine Learning Layer
 
 The ML layer is a **fourth analytical capability** bolted on top of the medallion
