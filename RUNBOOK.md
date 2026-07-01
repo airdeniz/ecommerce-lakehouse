@@ -3,6 +3,10 @@
 ## Quick Commands (cheat sheet)
 
 ```bash
+# Keep the viewing tools up, stop the production tools
+docker stop ecom-generator ecom-connect ecom-pyspark ecom-stock-monitor
+docker start ecom-connect ecom-pyspark ecom-generator ecom-stock-monitor
+
 # Start everything from scratch (build images first)
 docker compose up -d --build
 
