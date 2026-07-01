@@ -34,6 +34,9 @@ with DAG(
     schedule_interval="0 3 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
+    # Come up active after a fresh `down -v` reset instead of the Airflow
+    # default (paused), so the nightly schedule runs without a manual unpause.
+    is_paused_upon_creation=False,
     tags=["ml", "lakehouse"],
 ) as dag:
 
