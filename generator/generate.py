@@ -7,30 +7,18 @@ import psycopg2
 
 DSN = os.getenv("PG_DSN", "host=localhost port=5433 dbname=ecommerce user=postgres password=postgres")
 
-# Behavioural-simulation parameters. A uniform-random generator produces data
-# with no structure, which makes the downstream ML models meaningless. These
-# knobs inject the three kinds of signal the ML layer looks for:
-#   - skewed purchase frequency  -> a few heavy buyers, many light ones
-#     (gives customer segmentation real clusters)
-#   - some customers go "quiet"  -> their recency grows over time
-#     (gives the churn model something to separate)
-#   - occasional anomalous orders -> unusually large baskets / quantities
-#     (gives the anomaly model outliers to flag)
-ANOMALY_RATE = 0.02        # fraction of orders that are deliberately anomalous
-CHURN_FRACTION = 0.25      # fraction of users who stop ordering after their window
-ACTIVE_WINDOW_SEC = 1800   # churned users only order in the first 30 min of runtime
-
-
 def build_profiles(user_ids):
-    """Assign each user a stable behavioural profile for this run."""
+    """Assign each user a stable behavioural profile for this run.
+
+    A uniform-random generator produces flat, structureless data. A light
+    per-user profile gives the order stream some realistic variation instead.
+    """
     profiles = {}
     for uid in user_ids:
         profiles[uid] = {
             # Pareto-distributed weight: most users are light buyers, a few are
             # very heavy. Used to bias the random user choice below.
             "weight": random.paretovariate(1.5),
-            # A quarter of users churn: they only buy during the active window.
-            "churned": random.random() < CHURN_FRACTION,
             # Typical basket size for this user (drives per-user variation).
             "basket_bias": random.randint(1, 4),
         }
@@ -48,35 +36,19 @@ def main():
     products = cur.fetchall()
 
     profiles = build_profiles(user_ids)
-    start = time.time()
 
     print(f"Order generator started ({len(user_ids)} users, {len(products)} products). "
           "Press Ctrl+C to stop.")
     while True:
-        elapsed = time.time() - start
-
-        # Eligible users: churned users drop out once the active window passes,
-        # so their last-order timestamp ages and they look "churned" downstream.
-        eligible = [
-            u for u in user_ids
-            if not (profiles[u]["churned"] and elapsed > ACTIVE_WINDOW_SEC)
-        ]
-        weights = [profiles[u]["weight"] for u in eligible]
-        user_id = random.choices(eligible, weights=weights, k=1)[0]
+        # Bias user choice by their Pareto weight: a few heavy buyers, many light.
+        weights = [profiles[u]["weight"] for u in user_ids]
+        user_id = random.choices(user_ids, weights=weights, k=1)[0]
         prof = profiles[user_id]
 
-        # ~2% of orders are anomalous: many distinct products and/or very high
-        # quantities, well outside the normal distribution -> the anomaly model
-        # should flag these.
-        is_anomaly = random.random() < ANOMALY_RATE
-        if is_anomaly:
-            k = min(len(products), random.randint(5, 10))
-            qty_max = 50
-        else:
-            # Basket size centred on the user's bias, clamped to a sane range.
-            k = int(round(random.gauss(prof["basket_bias"], 1)))
-            k = max(1, min(len(products), k))
-            qty_max = 4
+        # Basket size centred on the user's bias, clamped to a sane range.
+        k = int(round(random.gauss(prof["basket_bias"], 1)))
+        k = max(1, min(len(products), k))
+        qty_max = 4
 
         chosen = random.sample(products, k=k)
 
@@ -109,8 +81,7 @@ def main():
         elif roll < 0.85:
             cur.execute("UPDATE orders SET status = 'CANCELLED' WHERE order_id = %s", (order_id,))
 
-        flag = " [ANOMALY]" if is_anomaly else ""
-        print(f"Order {order_id} | user {user_id} | amount {round(total,2)} | {len(items)} items{flag}")
+        print(f"Order {order_id} | user {user_id} | amount {round(total,2)} | {len(items)} items")
 
         # Occasionally (~5%) we delete an old CANCELLED order. In real life
         # cancelled orders may be cleaned out of the OLTP after a while.

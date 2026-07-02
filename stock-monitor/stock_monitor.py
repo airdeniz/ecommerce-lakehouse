@@ -42,7 +42,7 @@ original behaviour, always on). In ADDITION, when WRITE_ICEBERG_ALERTS is enable
 `lakehouse.ops.stock_alerts` so it becomes queryable from Spark Thrift / Superset.
 
 The Iceberg write reuses the SAME JDBC-over-Postgres catalog + MinIO S3A config
-as pyspark/orders_stream.py and ml/common.py. Atomic commits from the JDBC
+as pyspark/orders_stream.py. Atomic commits from the JDBC
 catalog make this a safe concurrent writer alongside the bronze stream and dbt.
 The Kafka consumer loop below is unchanged and stays on kafka-python; Spark is
 used ONLY to append the alert row. An Iceberg write failure is caught and logged
@@ -88,7 +88,7 @@ _spark = None
 def build_spark():
     """Build a local SparkSession wired to the lakehouse Iceberg catalog.
 
-    Mirrors pyspark/orders_stream.py and ml/common.py so the alert rows land in
+    Mirrors pyspark/orders_stream.py so the alert rows land in
     the same JDBC catalog that Spark Thrift / Superset read from.
     """
     from pyspark.sql import SparkSession

@@ -1,4 +1,4 @@
--- Seed data. Enriched to a realistic scale so the ML layer has signal:
+-- Seed data. Enriched to a realistic scale for richer analytics:
 -- a few hundred customers with varied cities and ~50 products across the
 -- existing categories. The original named users/products are kept first for
 -- continuity, then the rest are generated programmatically with generate_series
@@ -14,7 +14,7 @@ INSERT INTO users (full_name, city) VALUES
 
 -- ~295 more synthetic users. Names are composed from first/last-name pools and
 -- cities are drawn from a fixed set, so customer behaviour can vary by city and
--- the segmentation / churn models have enough rows to be meaningful.
+-- the analytics tables have enough rows to be meaningful.
 INSERT INTO users (full_name, city)
 SELECT
   (ARRAY['Ahmet','Elif','Mehmet','Zeynep','Can','Ayse','Mustafa','Fatma',
@@ -40,7 +40,7 @@ INSERT INTO products (product_id, name, category, price) VALUES
 
 -- ~42 more products (ids 9..50) spread across the same five categories, with
 -- prices varied by an arithmetic spread so order totals and per-item prices have
--- a realistic distribution for the anomaly model.
+-- a realistic distribution.
 INSERT INTO products (product_id, name, category, price)
 SELECT
   i,

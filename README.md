@@ -9,7 +9,7 @@ Modern e-commerce companies need to answer questions like *"How much revenue did
 This pipeline shows how to do that end-to-end:
 
 - **Capture every change** in the operational database (Postgres) the moment it happens, without polling tables or impacting performance — using **CDC** via Debezium.
-- **Decouple producers from consumers** with Kafka, so you can add new downstream systems (analytics, ML, search) without touching the source database.
+- **Decouple producers from consumers** with Kafka, so you can add new downstream systems (analytics, search, alerting) without touching the source database.
 - **Store raw data cheaply but reliably** in a self-hosted lakehouse (MinIO + Iceberg) — same benefits as Snowflake or Databricks, no cloud vendor lock-in.
 - **Transform data in layers** (bronze → silver → gold) with dbt, so analysts get clean, business-ready tables and engineers keep raw data available for reprocessing.
 - **Run transformations on a schedule** with Airflow, so the analytics tables are always fresh by morning.
@@ -33,9 +33,6 @@ flowchart LR
     THRIFT --> DBT[dbt Core]
     DBT -->|transform| MINIO
     AIRFLOW[Airflow<br/>nightly DAG] -.->|trigger| DBT
-    THRIFT --> MLJOBS[ML Jobs<br/>sklearn / Prophet]
-    MLJOBS -->|Iceberg write| MINIO
-    AIRFLOW -.->|trigger| MLJOBS
     THRIFT --> SUPERSET[Superset Dashboard]
     THRIFT --> MCP[MCP Server]
     MCP -->|natural-language Q&A| AGENT[AI Agent<br/>Claude Desktop]
@@ -77,29 +74,21 @@ flowchart TB
         ST[("Staging - views<br/>staging.*")]
         SL[("Silver - tables<br/>lakehouse.silver<br/>core_orders, core_order_items")]
         GD[("Gold - tables<br/>lakehouse.gold<br/>mart_daily_revenue<br/>mart_sales_by_category")]
-        MLF[("ML Features<br/>lakehouse.ml_features<br/>order feats, customer RFM,<br/>hourly revenue")]
-        MLO[("ML Outputs<br/>lakehouse.ml<br/>fraud_scores, demand_forecast,<br/>customer_segments, churn_predictions")]
         OPS[("Ops<br/>lakehouse.ops.stock_alerts<br/>Iceberg table")]
         S -->|writeStream foreachBatch| B
         SM -->|writeTo append<br/>on first crossing| OPS
         B --> ST
         ST --> SL
         SL --> GD
-        SL --> MLF
-        MLF --> MLO
     end
 
     subgraph ORCH["Orchestration"]
         A[Airflow DAG<br/>dbt_pipeline<br/>cron: 0 2 * * *]
-        MLA[Airflow DAG<br/>ml_pipeline<br/>cron: 0 3 * * *]
         TH[Spark Thrift Server<br/>port 10000]
         DB[dbt Core 1.8]
-        MLJ[ML Jobs<br/>spark-submit local<br/>sklearn / Prophet]
         A -->|trigger| DB
         DB -->|HiveServer2 protocol| TH
         TH -->|Iceberg SQL| LAKEHOUSE
-        MLA -->|trigger| MLJ
-        MLJ -->|read ml_features / write ml| LAKEHOUSE
     end
 
     subgraph VIZ["Visualization"]
@@ -198,26 +187,6 @@ Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `lakehouse
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the lakehouse to an AI agent such as Claude Desktop. It runs as a container in the pipeline network and reaches the warehouse through Spark Thrift, offering three tools: `list_tables`, `describe_table`, and `run_query` (read-only — DDL/DML is rejected).
 *Why:* Lets a non-technical user ask questions in plain language — *"which category sold the most?"*, *"find my top 5 customers by spend"* — and the agent discovers the schema and writes the SQL itself. The agent also applies business judgement: asked for "most valuable customers", it excludes cancelled and unpaid orders on its own, counting only realised (PAID) revenue. This turns the gold layer into a conversational analytics interface without building a custom NL-to-SQL service. See [mcp-server/README.md](mcp-server/README.md) for setup.
 
-### Machine Learning Layer
-
-**ML jobs (`ml/`) + feature models (`dbt/models/ml_features/`)**
-An additive analytical layer on top of silver. dbt builds versioned **feature
-tables** in `lakehouse.ml_features` (order features, customer RFM, hourly revenue),
-and four scikit-learn / Prophet jobs train on them and write results back as
-Iceberg tables in `lakehouse.ml`:
-1. **Fraud / anomaly** — IsolationForest scores each order (unsupervised).
-2. **Demand forecast** — Prophet forecasts hourly + daily revenue with confidence bands.
-3. **Customer segmentation** — KMeans groups customers by RFM behaviour.
-4. **Churn prediction** — LogisticRegression on a documented **proxy** label
-   (recency-based; the proxy basis is excluded from the inputs to avoid leakage).
-
-The jobs run as local `spark-submit` apps inside the Airflow scheduler (reusing
-the same Iceberg JDBC catalog the streaming job writes to), orchestrated by a
-second nightly DAG (`ml_pipeline`, 03:00, after dbt). Outputs surface in Superset
-and the MCP server with zero new infrastructure — both already read any
-`lakehouse.*` table over Thrift. The synthetic-data caveats and the churn-proxy
-rationale are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
-
 ## Design Deep-Dive
 
 The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
@@ -240,7 +209,6 @@ The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
 - [x] Phase 6 — Persistence: Kafka + Superset Postgres metadata
 - [x] Phase 7 — Multiple Consumers: stock monitoring service (Kafka fan-out)
 - [x] Phase 8 — AI Access Layer: MCP server for natural-language querying (Claude Desktop)
-- [x] Phase 9 — ML Layer: anomaly, forecasting, segmentation, churn (dbt feature store + Airflow + Iceberg + Superset)
 
 ## Known Limitations & Production Roadmap
 

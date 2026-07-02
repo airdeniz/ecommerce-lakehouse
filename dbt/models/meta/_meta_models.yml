@@ -4,7 +4,7 @@ models:
   - name: data_dictionary
     description: >
       Static, hand-maintained data dictionary for every table in the lakehouse
-      (bronze, staging, silver, gold, ml_features, ml, ops). One row per
+      (bronze, staging, silver, gold, ops). One row per
       (table_name, column_name) with an English description. Materialized as an
       Iceberg table in lakehouse.meta so it is queryable from Thrift / Superset.
     columns:

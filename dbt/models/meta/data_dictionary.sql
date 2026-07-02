@@ -1,6 +1,6 @@
 -- Static data dictionary for the whole lakehouse. One row per (table, column)
 -- with an English description. Hand-maintained: when a column is added/renamed in
--- a bronze / staging / silver / gold / ml_features / ml / ops table, add or edit
+-- a bronze / staging / silver / gold / ops table, add or edit
 -- the matching row here. Materialized as an Iceberg table (lakehouse.meta) so it
 -- is queryable from Spark Thrift / Superset:  SELECT * FROM lakehouse.meta.data_dictionary
 --
@@ -88,63 +88,6 @@ FROM VALUES
     ('lakehouse.gold.mart_sales_by_category', 'total_orders',     'Distinct PAID, non-deleted orders containing this category.'),
     ('lakehouse.gold.mart_sales_by_category', 'total_quantity',   'Total quantity sold in this category.'),
     ('lakehouse.gold.mart_sales_by_category', 'total_revenue',    'Total line revenue (sum of line_total) for this category.'),
-
-    -- ============================ ml_features (lakehouse.ml_features, dbt tables) ============================
-    ('lakehouse.ml_features.feat_customer_rfm',    'user_id',             'Customer identifier. One row per user.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'recency_days',        'Fractional days between the users last order and the datasets latest order. Excluded from churn inputs (defines the label).'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'frequency',           'Number of non-deleted orders placed by the user.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'monetary',            'Sum of paid_amount across the users orders.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'avg_basket',          'Average total_amount per order for the user.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'tenure_days',         'Fractional days between the users first order and the datasets latest order.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'distinct_categories', 'Number of distinct product categories the user has bought from.'),
-    ('lakehouse.ml_features.feat_customer_rfm',    'cancel_rate',         'Cancelled orders divided by total orders for the user.'),
-    ('lakehouse.ml_features.feat_order_features',  'order_id',            'Order identifier. One row per non-deleted order.'),
-    ('lakehouse.ml_features.feat_order_features',  'user_id',             'Customer who placed the order.'),
-    ('lakehouse.ml_features.feat_order_features',  'status',              'Order lifecycle status.'),
-    ('lakehouse.ml_features.feat_order_features',  'total_amount',        'Order total amount.'),
-    ('lakehouse.ml_features.feat_order_features',  'item_count',          'Number of lines on the order.'),
-    ('lakehouse.ml_features.feat_order_features',  'distinct_products',   'Number of distinct products on the order.'),
-    ('lakehouse.ml_features.feat_order_features',  'total_quantity',      'Total quantity across all lines of the order.'),
-    ('lakehouse.ml_features.feat_order_features',  'avg_unit_price',      'Average unit price across the orders lines.'),
-    ('lakehouse.ml_features.feat_order_features',  'max_unit_price',      'Maximum unit price across the orders lines.'),
-    ('lakehouse.ml_features.feat_order_features',  'hour_of_day',         'Hour (0-23) the order was created.'),
-    ('lakehouse.ml_features.feat_order_features',  'created_at',          'Order creation timestamp.'),
-    ('lakehouse.ml_features.feat_revenue_hourly',  'revenue_hour',        'Hour bucket (DATE_TRUNC HOUR of created_at). One row per hour.'),
-    ('lakehouse.ml_features.feat_revenue_hourly',  'total_orders',        'Count of non-deleted orders in the hour.'),
-    ('lakehouse.ml_features.feat_revenue_hourly',  'total_revenue',       'Sum of paid_amount in the hour.'),
-
-    -- ============================ ml (lakehouse.ml, spark-submit ML jobs) ============================
-    ('lakehouse.ml.churn_predictions',   'user_id',             'Customer identifier. One row per user.'),
-    ('lakehouse.ml.churn_predictions',   'churn_probability',   'LogisticRegression predicted probability (0-1) that the customer has churned.'),
-    ('lakehouse.ml.churn_predictions',   'churn_label_proxy',   'Proxy churn label: 1 when recency is in the worst tercile, else 0. Not ground truth.'),
-    ('lakehouse.ml.churn_predictions',   'frequency',           'Feature copy: number of orders (model input).'),
-    ('lakehouse.ml.churn_predictions',   'monetary',            'Feature copy: total paid amount (model input).'),
-    ('lakehouse.ml.churn_predictions',   'avg_basket',          'Feature copy: average basket value (model input).'),
-    ('lakehouse.ml.churn_predictions',   'tenure_days',         'Feature copy: customer tenure in days (model input).'),
-    ('lakehouse.ml.churn_predictions',   'distinct_categories', 'Feature copy: distinct categories bought (model input).'),
-    ('lakehouse.ml.churn_predictions',   'cancel_rate',         'Feature copy: cancellation rate (model input).'),
-    ('lakehouse.ml.customer_segments',   'user_id',             'Customer identifier. One row per user.'),
-    ('lakehouse.ml.customer_segments',   'cluster_id',          'KMeans cluster id assigned to the customer.'),
-    ('lakehouse.ml.customer_segments',   'segment_label',       'Human label by descending mean spend: Champions, Loyal, Promising, At-Risk.'),
-    ('lakehouse.ml.customer_segments',   'recency_days',        'Feature copy: recency in days (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'frequency',           'Feature copy: number of orders (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'monetary',            'Feature copy: total paid amount (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'avg_basket',          'Feature copy: average basket value (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'tenure_days',         'Feature copy: customer tenure in days (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'distinct_categories', 'Feature copy: distinct categories bought (clustering input).'),
-    ('lakehouse.ml.customer_segments',   'cancel_rate',         'Feature copy: cancellation rate (clustering input).'),
-    ('lakehouse.ml.fraud_scores',        'order_id',            'Order identifier. One row per scored order.'),
-    ('lakehouse.ml.fraud_scores',        'user_id',             'Customer who placed the order.'),
-    ('lakehouse.ml.fraud_scores',        'status',              'Order lifecycle status.'),
-    ('lakehouse.ml.fraud_scores',        'total_amount',        'Order total amount.'),
-    ('lakehouse.ml.fraud_scores',        'anomaly_score',       'IsolationForest anomaly score, negated so higher = more anomalous.'),
-    ('lakehouse.ml.fraud_scores',        'is_anomaly',          'True when IsolationForest flags the order as anomalous (~2% contamination).'),
-    ('lakehouse.ml.demand_forecast',     'grain',               'Forecast grain discriminator: hourly or daily.'),
-    ('lakehouse.ml.demand_forecast',     'ds',                  'Timestamp of the forecasted / fitted point (Prophet ds).'),
-    ('lakehouse.ml.demand_forecast',     'yhat',                'Prophet point forecast of total revenue.'),
-    ('lakehouse.ml.demand_forecast',     'yhat_lower',          'Lower bound of the 80% confidence band.'),
-    ('lakehouse.ml.demand_forecast',     'yhat_upper',          'Upper bound of the 80% confidence band.'),
-    ('lakehouse.ml.demand_forecast',     'is_forecast',         'False for fitted history, true for future forecast points.'),
 
     -- ============================ ops (lakehouse.ops, stock-monitor consumer) ============================
     ('lakehouse.ops.stock_alerts',       'product_id',          'Product that dropped to or below the low-stock threshold.'),
