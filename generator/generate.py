@@ -37,9 +37,36 @@ def main():
 
     profiles = build_profiles(user_ids)
 
+    # Status transitions (CREATED -> PAID/CANCELLED) are not applied inline.
+    # In real life an order sits in CREATED for a while before it is paid or
+    # cancelled, so we schedule the transition for at least MIN_STATUS_DELAY_S
+    # seconds later and apply it on a subsequent loop iteration. Applying it in
+    # the same iteration produced CREATED and its UPDATE within microseconds of
+    # each other, which looked fake in the CDC stream.
+    MIN_STATUS_DELAY_S = 5.0
+    MAX_STATUS_DELAY_S = 20.0
+    pending = []  # list of (due_ts, order_id, new_status)
+
+    def flush_pending(now):
+        """Apply any scheduled status transitions whose delay has elapsed."""
+        still_pending = []
+        for due_ts, order_id, new_status in pending:
+            if due_ts <= now:
+                cur.execute(
+                    "UPDATE orders SET status = %s WHERE order_id = %s",
+                    (new_status, order_id),
+                )
+                print(f"  -> Order {order_id} -> {new_status}")
+            else:
+                still_pending.append((due_ts, order_id, new_status))
+        pending[:] = still_pending
+
     print(f"Order generator started ({len(user_ids)} users, {len(products)} products). "
           "Press Ctrl+C to stop.")
     while True:
+        # Apply due status transitions from earlier iterations first.
+        flush_pending(time.time())
+
         # Bias user choice by their Pareto weight: a few heavy buyers, many light.
         weights = [profiles[u]["weight"] for u in user_ids]
         user_id = random.choices(user_ids, weights=weights, k=1)[0]
@@ -75,11 +102,15 @@ def main():
                 (qty, product_id),
             )
 
+        # Decide the order's eventual fate now, but defer the actual UPDATE so
+        # a realistic gap sits between the CREATED insert and its transition.
         roll = random.random()
         if roll < 0.70:
-            cur.execute("UPDATE orders SET status = 'PAID' WHERE order_id = %s", (order_id,))
+            due = time.time() + random.uniform(MIN_STATUS_DELAY_S, MAX_STATUS_DELAY_S)
+            pending.append((due, order_id, "PAID"))
         elif roll < 0.85:
-            cur.execute("UPDATE orders SET status = 'CANCELLED' WHERE order_id = %s", (order_id,))
+            due = time.time() + random.uniform(MIN_STATUS_DELAY_S, MAX_STATUS_DELAY_S)
+            pending.append((due, order_id, "CANCELLED"))
 
         print(f"Order {order_id} | user {user_id} | amount {round(total,2)} | {len(items)} items")
 
