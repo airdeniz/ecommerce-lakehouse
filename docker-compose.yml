@@ -11,6 +11,7 @@ services:
       - "5433:5432"
     volumes:
       - ./postgres/init:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ecommerce"]
       interval: 5s
@@ -350,6 +351,7 @@ services:
       LAKEHOUSE_CATALOG: lakehouse
 
 volumes:
+  postgres_data:
   minio_data:
   airflow_db_data:
   superset_db_data:
