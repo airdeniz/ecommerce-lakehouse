@@ -219,3 +219,5 @@ __marimo__/
 *.patch
 
 NOTES.md
+
+*.stackdump
