@@ -3,6 +3,7 @@ WITH source AS (
         op,
         lsn,
         ts_ms,
+        kafka_offset,
         product_id,
         get_json_object(raw_payload, '$.name')          AS name,
         get_json_object(raw_payload, '$.category')      AS category,
@@ -15,7 +16,7 @@ deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY product_id
-            ORDER BY lsn DESC, ts_ms DESC
+            ORDER BY lsn DESC, ts_ms DESC, kafka_offset DESC
         ) AS rn
     FROM source
 )

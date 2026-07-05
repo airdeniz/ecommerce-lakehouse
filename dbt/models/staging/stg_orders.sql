@@ -3,6 +3,7 @@ WITH source AS (
         op,
         lsn,
         ts_ms,
+        kafka_offset,
         order_id,
         -- Business columns are not separate columns in bronze; they are
         -- extracted from the raw_payload JSON. If a new column is added to the
@@ -22,7 +23,7 @@ deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY order_id
-            ORDER BY lsn DESC, ts_ms DESC
+            ORDER BY lsn DESC, ts_ms DESC, kafka_offset DESC
         ) AS rn
     FROM source
 )

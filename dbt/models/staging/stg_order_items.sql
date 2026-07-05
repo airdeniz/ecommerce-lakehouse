@@ -3,6 +3,7 @@ WITH source AS (
         op,
         lsn,
         ts_ms,
+        kafka_offset,
         order_item_id,
         CAST(get_json_object(raw_payload, '$.order_id') AS BIGINT)    AS order_id,
         CAST(get_json_object(raw_payload, '$.product_id') AS BIGINT)  AS product_id,
@@ -16,7 +17,7 @@ deduped AS (
     SELECT *,
         ROW_NUMBER() OVER (
             PARTITION BY order_item_id
-            ORDER BY lsn DESC, ts_ms DESC
+            ORDER BY lsn DESC, ts_ms DESC, kafka_offset DESC
         ) AS rn
     FROM source
 )
