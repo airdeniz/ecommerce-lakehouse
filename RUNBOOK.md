@@ -4,7 +4,7 @@
 
 ```bash
 #Bring up only the viewing/query stack (DBs, UIs, Thrift) — production tools stay down
-docker compose up -d console superset airflow-webserver airflow-scheduler spark-thrift mcp-server
+docker compose up -d postgres console superset airflow-webserver airflow-scheduler spark-thrift mcp-server
 # Keep the viewing tools up, stop the production tools
 docker stop ecom-generator ecom-connect ecom-pyspark ecom-stock-monitor
 # Resume the production tools
