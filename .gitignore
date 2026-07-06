@@ -221,3 +221,6 @@ __marimo__/
 NOTES.md
 
 *.stackdump
+# dbt
+dbt/logs/
+dbt/target/

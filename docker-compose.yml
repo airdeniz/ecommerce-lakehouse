@@ -226,6 +226,23 @@ services:
       timeout: 5s
       retries: 5
 
+  superset-init:
+    build: ./superset
+    container_name: ecom-superset-init
+    depends_on:
+      superset-db:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://superset:superset@superset-db:5432/superset
+    command: >
+      bash -c "superset db upgrade &&
+      superset fab create-admin
+      --username ${SUPERSET_ADMIN_USER} --password ${SUPERSET_ADMIN_PASSWORD}
+      --firstname Admin --lastname User --email admin@example.com &&
+      superset init"
+    restart: "no"
+
   superset:
     build: ./superset
     container_name: ecom-superset
@@ -237,6 +254,8 @@ services:
     depends_on:
       superset-db:
         condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
 
   airflow-db:
     image: postgres:16
