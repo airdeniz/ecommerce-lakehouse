@@ -10,6 +10,9 @@ MINIO_PASS = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin123")
 ICE_USER = os.environ.get("ICEBERG_DB_USER", "iceberg")
 ICE_PASS = os.environ.get("ICEBERG_DB_PASSWORD", "iceberg")
 ICE_DB = os.environ.get("ICEBERG_DB_NAME", "iceberg")
+# Comma-separated broker list; both brokers are passed so the driver can still
+# bootstrap cluster metadata if one broker is down at startup.
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092,kafka2:9092,kafka3:9092")
 
 spark = SparkSession.builder \
     .appName("ecommerce-orders-stream") \
@@ -96,7 +99,7 @@ spark.sql("""
 def make_stream(topic, pk):
     return spark.readStream \
         .format("kafka") \
-        .option("kafka.bootstrap.servers", "kafka:9092") \
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP) \
         .option("subscribe", topic) \
         .option("startingOffsets", "earliest") \
         .load() \

@@ -211,8 +211,9 @@ at an old count. The Debezium connector reports `RUNNING`. Querying the Kafka
 topic offset shows it stuck at the old high-water mark; reading the last
 messages shows old order_ids and yesterday's timestamps, not the new rows.
 **Cause:** The volumes got reset unevenly. Postgres's volume was wiped (fresh
-DB, low order_ids, new LSN space) while Kafka's `kafka_data` and the PySpark
-checkpoints on MinIO survived. Three pieces now disagree:
+DB, low order_ids, new LSN space) while Kafka's broker volumes (`kafka_data`,
+`kafka2_data`, `kafka3_data`) and the PySpark checkpoints on MinIO survived.
+Three pieces now disagree:
 1. Debezium's replication slot remembers an old LSN from the previous DB, so it
    ignores the new (low-LSN) changes from the fresh Postgres — no new events
    reach Kafka even though the connector is "running".

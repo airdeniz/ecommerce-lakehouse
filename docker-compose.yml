@@ -28,19 +28,84 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093,2@kafka2:9093,3@kafka3:9093"
       KAFKA_LISTENERS: "PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:29092"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # 3-broker cluster → RF=3 with min-ISR=2 (the standard production triple:
+      # acks=all + min.insync.replicas=2 tolerates exactly one broker loss while
+      # still guaranteeing every write lands on >=2 replicas).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: ecom-kafka2
+    ports:
+      - "29093:29093"
+    volumes:
+      - kafka2_data:/var/lib/kafka/data
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093,2@kafka2:9093,3@kafka3:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://kafka2:9092,CONTROLLER://kafka2:9093,PLAINTEXT_HOST://0.0.0.0:29093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka2:9092,PLAINTEXT_HOST://localhost:29093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka2:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: ecom-kafka3
+    ports:
+      - "29094:29094"
+    volumes:
+      - kafka3_data:/var/lib/kafka/data
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093,2@kafka2:9093,3@kafka3:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://kafka3:9092,CONTROLLER://kafka3:9093,PLAINTEXT_HOST://0.0.0.0:29094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka3:9092,PLAINTEXT_HOST://localhost:29094"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka3:9092", "--list"]
       interval: 10s
       timeout: 10s
       retries: 15
@@ -51,6 +116,10 @@ services:
     container_name: ecom-connect
     depends_on:
       kafka:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -64,19 +133,21 @@ services:
       STATUS_STORAGE_TOPIC: "connect_statuses"
       KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
       VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      STATUS_STORAGE_REPLICATION_FACTOR: 3
 
   console:
     image: docker.redpanda.com/redpandadata/console:v2.6.0
     container_name: ecom-console
     depends_on:
       - kafka
+      - kafka2
+      - kafka3
     ports:
       - "8081:8080"
     environment:
-      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_BROKERS: "kafka:9092,kafka2:9092,kafka3:9092"
       CONNECT_ENABLED: "true"
       CONNECT_CLUSTERS_NAME: "debezium"
       CONNECT_CLUSTERS_URL: "http://connect:8083"
@@ -96,6 +167,10 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
       connector-init:
         condition: service_completed_successfully
       minio:
@@ -105,7 +180,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092,kafka2:9092,kafka3:9092
       INVENTORY_TOPIC: ecom.public.inventory
       LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-10}
       # Persist alerts to lakehouse.ops.stock_alerts (set to "false" for console-only).
@@ -152,6 +227,10 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
       minio:
         condition: service_healthy
       iceberg-db:
@@ -161,6 +240,7 @@ services:
       connector-init:
         condition: service_completed_successfully
     environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092,kafka2:9092,kafka3:9092
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       ICEBERG_DB_USER: ${ICEBERG_DB_USER}
@@ -173,6 +253,10 @@ services:
     container_name: ecom-spark-thrift
     depends_on:
       kafka:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -375,4 +459,6 @@ volumes:
   airflow_db_data:
   superset_db_data:
   kafka_data:
+  kafka2_data:
+  kafka3_data:
   iceberg_db_data:

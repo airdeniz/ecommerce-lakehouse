@@ -127,6 +127,14 @@ curl.exe http://localhost:8083/connectors/ecommerce-connector/status
 docker exec ecom-kafka kafka-run-class kafka.tools.GetOffsetShell \
   --broker-list kafka:9092 --topic ecom.public.orders
 
+# All 3 brokers up and forming the KRaft quorum? (LeaderId set, 3 voters)
+docker exec ecom-kafka kafka-metadata-quorum \
+  --bootstrap-server kafka:9092 describe --status
+
+# Topics replicated across the cluster? (ReplicationFactor: 3, Isr lists 3 brokers)
+docker exec ecom-kafka kafka-topics --bootstrap-server kafka:9092 \
+  --describe --topic ecom.public.orders
+
 # PySpark writing to bronze? (look for "Batch N: M kayit yazildi")
 docker logs ecom-pyspark --tail 20
 
@@ -153,6 +161,15 @@ docker exec ecom-postgres psql -U postgres -d ecommerce -c \
   "UPDATE orders SET discount = 250 WHERE order_id = 5;"
 docker exec -it ecom-mcp-server python -c \
   "import server; print(server.run_query('SELECT op, order_id, raw_payload FROM lakehouse.bronze.orders WHERE order_id = 5 ORDER BY lsn DESC LIMIT 2'))"
+
+# Broker failover: with a 3-broker cluster (RF=3, min.insync.replicas=2), kill one
+# broker and watch a partition keep its leader while its ISR shrinks 3 -> 2. The
+# pipeline keeps producing/consuming because 2 in-sync replicas still satisfy
+# acks=all. Restart the broker and the ISR heals back to 3.
+docker stop ecom-kafka3
+docker exec ecom-kafka kafka-topics --bootstrap-server kafka:9092 \
+  --describe --topic ecom.public.orders          # Isr now lists 2 brokers
+docker start ecom-kafka3                          # rejoins; Isr returns to 3
 ```
 
 ## Connecting the AI agent (Claude Desktop)

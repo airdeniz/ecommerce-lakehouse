@@ -57,7 +57,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 from kafka import KafkaConsumer
 
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092,kafka2:9092,kafka3:9092")
 INVENTORY_TOPIC = os.environ.get("INVENTORY_TOPIC", "ecom.public.inventory")
 # An alert is produced when stock drops below this threshold
 LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))

@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph CDC_LAYER["CDC Layer"]
         D[Debezium Connect<br/>pgoutput plugin]
-        K[("Kafka KRaft<br/>topics: ecom.public.*")]
+        K[("Kafka KRaft<br/>3-broker cluster · RF=3<br/>topics: ecom.public.*")]
         P -->|WAL logical replication| D
         D -->|Debezium JSON<br/>payload.before / payload.after| K
     end
@@ -120,9 +120,9 @@ Operational database with WAL (Write-Ahead Log) enabled at the logical level. Ev
 Kafka Connect plugin that reads Postgres WAL via the `pgoutput` plugin and publishes change events to Kafka. Registered automatically at startup via `connector-init` service hitting the Debezium REST API.
 *Why:* CDC enables capturing changes without polling tables. Zero load on the source database.
 
-**Kafka (KRaft mode)**
-Message broker that decouples the producer (Debezium) from consumers (PySpark, stock monitor). Topics: `ecom.public.orders`, `ecom.public.users`, `ecom.public.products`, `ecom.public.order_items`, `ecom.public.inventory`.
-*Why:* Without Kafka, every downstream consumer would have to connect directly to Postgres. Kafka acts as a durable buffer with multiple consumer support.
+**Kafka (KRaft mode, 3-broker cluster)**
+Message broker that decouples the producer (Debezium) from consumers (PySpark, stock monitor). Runs as a 3-broker KRaft cluster (`kafka`, `kafka2`, `kafka3`) — all three are both brokers and controllers. Topics are replicated with `RF=3` and `min.insync.replicas=2`. Topics: `ecom.public.orders`, `ecom.public.users`, `ecom.public.products`, `ecom.public.order_items`, `ecom.public.inventory`.
+*Why:* Without Kafka, every downstream consumer would have to connect directly to Postgres. Kafka acts as a durable buffer with multiple consumer support. Three brokers with `RF=3` mean every partition is replicated across the cluster, so it tolerates one broker failing without data loss or a write stall (`acks=all` still satisfied by 2 in-sync replicas), and a 3-node controller quorum survives one controller loss. On a single machine this is primarily for demonstrating replication/failover, not real hardware HA.
 
 **Redpanda Console**
 Web UI for inspecting Kafka topics, messages, and connector status.
@@ -272,7 +272,9 @@ Then connect Superset to Spark Thrift Server:
 | Spark Thrift Server | localhost:10000 | — | — |
 | Postgres | localhost:5433 | postgres / postgres | — |
 | Iceberg Catalog DB | internal only | iceberg / iceberg | `iceberg_db_data` |
-| Kafka | localhost:29092 | — | `kafka_data` |
+| Kafka broker 1 | localhost:29092 | — | `kafka_data` |
+| Kafka broker 2 | localhost:29093 | — | `kafka2_data` |
+| Kafka broker 3 | localhost:29094 | — | `kafka3_data` |
 | MCP Server | internal (via `docker exec`) | — | — |
 
 > Debezium connector is registered automatically on startup via the `connector-init` service.

@@ -14,6 +14,8 @@
     "slot.name": "debezium_slot",
     "table.include.list": "public.users,public.products,public.inventory,public.orders,public.order_items",
     "tombstones.on.delete": "false",
-    "decimal.handling.mode": "string"
+    "decimal.handling.mode": "string",
+    "topic.creation.default.replication.factor": "3",
+    "topic.creation.default.partitions": "1"
   }
 }
