@@ -16,6 +16,6 @@
     "tombstones.on.delete": "false",
     "decimal.handling.mode": "string",
     "topic.creation.default.replication.factor": "3",
-    "topic.creation.default.partitions": "1"
+    "topic.creation.default.partitions": "3"
   }
 }

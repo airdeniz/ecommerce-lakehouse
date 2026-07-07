@@ -36,6 +36,7 @@ spark.sparkContext.setLogLevel("WARN")
 # Iceberg bronze tables: RAW payload approach.
 # Every table shares the same minimal schema:
 #   op, lsn, ts_ms, kafka_offset  -> CDC metadata (for dedup and ordering)
+#   kafka_partition               -> source partition (lineage/observability only)
 #   <pk>            -> dedup partition key (a separate column instead of
 #                      extracting it from JSON each time -> performance + clean PARTITION BY)
 #   raw_payload     -> the ENTIRE Debezium payload, as a JSON string
@@ -51,7 +52,7 @@ spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.bronze")
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.orders (
-        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT, kafka_partition INT,
         order_id BIGINT,
         raw_payload STRING
     ) USING iceberg
@@ -59,7 +60,7 @@ spark.sql("""
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.users (
-        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT, kafka_partition INT,
         user_id BIGINT,
         raw_payload STRING
     ) USING iceberg
@@ -67,7 +68,7 @@ spark.sql("""
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.products (
-        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT, kafka_partition INT,
         product_id BIGINT,
         raw_payload STRING
     ) USING iceberg
@@ -75,14 +76,14 @@ spark.sql("""
 
 spark.sql("""
     CREATE TABLE IF NOT EXISTS lakehouse.bronze.order_items (
-        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT,
+        op STRING, lsn BIGINT, ts_ms BIGINT, kafka_offset BIGINT, kafka_partition INT,
         order_item_id BIGINT,
         raw_payload STRING
     ) USING iceberg
 """)
 
 # Single, delete-aware stream factory for all tables.
-# Output: kafka_offset, op, lsn, ts_ms, <pk>, raw_payload
+# Output: kafka_offset, kafka_partition, op, lsn, ts_ms, <pk>, raw_payload
 #   - op/lsn/ts_ms/kafka_offset: CDC metadata (ordering + dedup)
 #   - pk: dedup partition key; since after is NULL on a delete it is taken via
 #         COALESCE(after.<pk>, before.<pk>)
@@ -110,9 +111,18 @@ def make_stream(topic, pk):
             # in the same partition -> offset is a deterministic tie-breaker when
             # lsn/ts_ms collide (notably across snapshot rows, which share one lsn).
             col("offset").alias("kafka_offset"),
+            # Kafka partition this record landed in. Recorded for lineage /
+            # observability only (which partition — and thus which broker's leader —
+            # served this row) now that topics are multi-partition. NOT used for
+            # dedup: Debezium keys each event by PK, so all events for one row share
+            # a single partition, and kafka_offset alone already disambiguates within
+            # a dedup group (PARTITION BY <pk>). Adding it to the tie-breaker is a
+            # no-op because it is constant inside every dedup window.
+            col("partition").alias("kafka_partition"),
         ) \
         .select(
             col("kafka_offset"),
+            col("kafka_partition"),
             get_json_object(col("v"), "$.payload.op").alias("op"),
             get_json_object(col("v"), "$.payload.source.lsn").cast("long").alias("lsn"),
             get_json_object(col("v"), "$.payload.source.ts_ms").cast("long").alias("ts_ms"),
