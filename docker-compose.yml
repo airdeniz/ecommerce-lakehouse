@@ -133,9 +133,26 @@ services:
       STATUS_STORAGE_TOPIC: "connect_statuses"
       KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
       VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONFIG_STORAGE_REPLICATION_FACTOR: 3
-      OFFSET_STORAGE_REPLICATION_FACTOR: 3
-      STATUS_STORAGE_REPLICATION_FACTOR: 3
+      # NOTE: the debezium/connect entrypoint only auto-maps a fixed set of
+      # friendly vars (…_TOPIC, GROUP_ID, BOOTSTRAP_SERVERS, converters) to
+      # CONNECT_* properties. Replication factor is NOT in that set, so it must
+      # carry the CONNECT_ prefix explicitly — otherwise it's silently ignored
+      # and the baked-in default of 1 is used (→ RF=1 topics that can never
+      # satisfy min.insync.replicas=2, causing endless NOT_ENOUGH_REPLICAS).
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+    # "healthy" = REST API answers 200 AND the internal RF=3 topics
+    # (connect_configs/offsets/statuses) are writable. Gating connector-init on
+    # this (not just service_started) closes the race where the REST port is up
+    # but the fresh 3-broker KRaft quorum hasn't reached ISR>=2 yet, so the POST
+    # that persists the connector config fails with NOT_ENOUGH_REPLICAS.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
 
   console:
     image: docker.redpanda.com/redpandadata/console:v2.6.0
@@ -197,7 +214,7 @@ services:
     container_name: ecom-connector-init
     depends_on:
       connect:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./debezium/register-postgres.json:/register-postgres.json
       - ./debezium/register-connector.sh:/register-connector.sh
