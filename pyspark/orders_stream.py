@@ -48,6 +48,14 @@ spark.sparkContext.setLogLevel("WARN")
 # Fields are extracted in staging via get_json_object / JSON path. Trade-off:
 # JSON parse cost on read, but bronze is the "capture-and-store" layer;
 # interpretation happens in the upper layers.
+# The Spark Thrift Server runs with spark.sql.defaultCatalog=lakehouse so that
+# clients (Superset, MCP) see the silver/gold namespaces directly. On every new
+# HiveServer2 session the Thrift Server implicitly runs `USE default`, which now
+# resolves to `lakehouse.default` — so that namespace MUST exist or session open
+# fails. The JDBC catalog does not auto-create it; we do it here (the streaming
+# job already owns a lakehouse-catalog Spark session, with no Hive/Derby to lock).
+spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.`default`")
+
 spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.bronze")
 
 spark.sql("""

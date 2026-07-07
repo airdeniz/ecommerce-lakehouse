@@ -18,10 +18,13 @@ on-run-start:
 models:
   ecommerce:
     staging:
-      # Staging views default Spark catalog'da kalir; her dbt run'da yeniden
-      # olusturulduklari icin (DROP/CREATE VIEW) thrift restart'i sorun degil.
+      # Staging views live in the built-in Spark session catalog (spark_catalog),
+      # which supports views; the Iceberg JDBC catalog does not. The catalog is
+      # named explicitly (spark_catalog.staging) so these views resolve correctly
+      # even though the Thrift default catalog is 'lakehouse'. Recreated each dbt
+      # run (DROP/CREATE VIEW), so a thrift restart is not a problem.
       +materialized: view
-      +schema: staging
+      +schema: spark_catalog.staging
     core:
       # Silver tablolari Iceberg JDBC catalog'unda -> thrift restart'ina dayanikli,
       # ACID, time travel. Schema 'lakehouse.silver' three-part name uretir.
