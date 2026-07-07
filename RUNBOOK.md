@@ -199,3 +199,11 @@ docker image prune -a                 # reclaim space from unused images
 docker system df                      # show docker disk usage
 docker compose build --no-cache pyspark  # rebuild ignoring cache (stale code)
 ```
+
+## dbt katmanlarını tek tek çalıştırma
+
+```bash
+docker exec ecom-airflow-scheduler dbt run --select staging --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-staging katmanı çalıştırma
+docker exec ecom-airflow-scheduler dbt run --select core    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-silver katmanı çalıştırma
+docker exec ecom-airflow-scheduler dbt run --select mart    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-mart katmanı çalıştırma
+```
