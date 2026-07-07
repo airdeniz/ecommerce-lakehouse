@@ -178,6 +178,22 @@ services:
     environment:
       PG_DSN: ${PG_DSN}
 
+  # Manual-insert web UI for the source OLTP DB. Writes straight to Postgres like
+  # a real application would — independent of the CDC pipeline, so it works even
+  # while generator/connect/pyspark are stopped. Handy for demoing a single order
+  # flowing end-to-end. Served on http://localhost:8085 (host 8085 -> container
+  # 8090; 8090 is reserved by Windows/WinNAT so the host side maps to 8085).
+  order-ui:
+    build: ./order-ui
+    container_name: ecom-order-ui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_DSN: ${PG_DSN}
+    ports:
+      - "8085:8090"
+
   stock-monitor:
     build: ./stock-monitor
     container_name: ecom-stock-monitor
@@ -302,6 +318,7 @@ services:
       --conf spark.sql.catalog.lakehouse.jdbc.password=$${ICEBERG_DB_PASSWORD}
       --conf spark.sql.catalog.lakehouse.jdbc.schema-version=V1
       --conf spark.sql.catalog.lakehouse.warehouse=s3a://lakehouse/
+      --conf spark.sql.defaultCatalog=lakehouse
       --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000
       --conf spark.hadoop.fs.s3a.access.key=$${MINIO_ROOT_USER}
       --conf spark.hadoop.fs.s3a.secret.key=$${MINIO_ROOT_PASSWORD}
