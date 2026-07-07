@@ -24,7 +24,7 @@ In short: it shows how to build the **same data infrastructure that companies li
 flowchart LR
     GEN[Order Generator] -->|INSERT| PG[(Postgres<br/>WAL)]
     PG -->|CDC| DBZ[Debezium]
-    DBZ -->|JSON events| KAFKA[Kafka<br/>3-broker cluster · RF=3]
+    DBZ -->|JSON events| KAFKA["Kafka cluster<br/>3 brokers (RF=3)"]
     KAFKA -->|stream| SPARK[PySpark]
     KAFKA -->|inventory stream| STOCK[Stock Monitor<br/>low-stock alerts]
     SPARK -->|Iceberg write| MINIO[(MinIO<br/>Lakehouse)]
