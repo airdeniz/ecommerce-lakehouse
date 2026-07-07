@@ -24,7 +24,7 @@ In short: it shows how to build the **same data infrastructure that companies li
 flowchart LR
     GEN[Order Generator] -->|INSERT| PG[(Postgres<br/>WAL)]
     PG -->|CDC| DBZ[Debezium]
-    DBZ -->|JSON events| KAFKA[Kafka]
+    DBZ -->|JSON events| KAFKA[Kafka<br/>3-broker cluster · RF=3]
     KAFKA -->|stream| SPARK[PySpark]
     KAFKA -->|inventory stream| STOCK[Stock Monitor<br/>low-stock alerts]
     SPARK -->|Iceberg write| MINIO[(MinIO<br/>Lakehouse)]
@@ -52,20 +52,26 @@ flowchart TB
 
     subgraph CDC_LAYER["CDC Layer"]
         D[Debezium Connect<br/>pgoutput plugin]
-        K[("Kafka KRaft<br/>3-broker cluster · RF=3<br/>topics: ecom.public.*")]
+        subgraph KAFKA_CLUSTER["Kafka · KRaft · RF=3 · 3 partitions/topic · ecom.public.*"]
+            K1[br1]
+            K2[br2]
+            K3[br3]
+        end
         P -->|WAL logical replication| D
-        D -->|Debezium JSON<br/>payload.before / payload.after| K
+        D -->|Debezium JSON<br/>keyed by PK to partition leaders| K1
+        D --> K2
+        D --> K3
     end
 
     subgraph STREAM["Stream Processing"]
         S[PySpark Structured Streaming<br/>orders_stream.py]
-        K -->|subscribe earliest| S
+        KAFKA_CLUSTER -->|subscribe earliest| S
         S -->|parse JSON, filter op c/u/r| S
     end
 
     subgraph CONSUMERS["Other Consumers — Kafka fan-out"]
         SM[Stock Monitor<br/>stock_monitor.py<br/>group: stock-monitor-service]
-        K -->|subscribe inventory topic| SM
+        KAFKA_CLUSTER -->|subscribe inventory topic| SM
         SM -->|stock_qty below threshold| ALERT[Low-stock alert<br/>Slack / email in prod]
     end
 
@@ -99,7 +105,7 @@ flowchart TB
     subgraph OPS["Monitoring — not in data flow"]
         RC[Redpanda Console<br/>port 8081]
     end
-    K -.->|inspected by| RC
+    KAFKA_CLUSTER -.->|inspected by| RC
 ```
 
 ## Component Breakdown
