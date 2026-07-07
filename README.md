@@ -53,9 +53,8 @@ flowchart TB
     subgraph CDC_LAYER["CDC Layer"]
         D[Debezium Connect<br/>pgoutput plugin]
         subgraph KAFKA_CLUSTER["Kafka · KRaft · RF=3 · 3 partitions"]
-            K1[br1]
-            K2[br2]
-            K3[br3]
+            direction LR
+            K1[br1] ~~~ K2[br2] ~~~ K3[br3]
         end
         P -->|WAL logical replication| D
         D -->|Debezium JSON<br/>keyed by PK to partition leaders| KAFKA_CLUSTER
