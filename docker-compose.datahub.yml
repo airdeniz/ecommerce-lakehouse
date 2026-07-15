@@ -119,6 +119,11 @@ services:
       datahub-kafka-setup:
         condition: service_completed_successfully
     environment:
+      # The datahub-upgrade image bundles entity-registry.yml at this path but,
+      # unlike the gms image, does NOT set this var in its entrypoint. Without it
+      # the app falls back to a source-tree relative path that doesn't exist and
+      # SystemUpdate dies with FileNotFoundException (.../metadata-models/...).
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
       ELASTICSEARCH_HOST: datahub-elasticsearch
       ELASTICSEARCH_PORT: "9200"
       ELASTICSEARCH_PROTOCOL: http
@@ -148,6 +153,10 @@ services:
     environment:
       DATAHUB_SERVER_TYPE: quickstart
       DATAHUB_TELEMETRY_ENABLED: "false"
+      # Same fix as datahub-system-update: this image also defaults to a
+      # nonexistent source-tree path for the entity registry unless told the
+      # bundled location explicitly.
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
       # Embed all metadata-change consumers inside GMS so no separate mae/mce
       # consumer containers are needed for a single-machine deployment.
       MAE_CONSUMER_ENABLED: "true"
