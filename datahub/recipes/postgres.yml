@@ -1,0 +1,23 @@
+# Source OLTP database (the CDC origin). Catalogs public.* tables + views so the
+# lineage graph starts where the data is actually born, before Debezium.
+source:
+  type: postgres
+  config:
+    host_port: "postgres:5432"
+    database: "${POSTGRES_DB}"
+    username: "${POSTGRES_USER}"
+    password: "${POSTGRES_PASSWORD}"
+    schema_pattern:
+      allow:
+        - "public"
+    include_tables: true
+    include_views: true
+    # Row profiling would open extra connections against the live OLTP DB; keep
+    # it off for a demo. Flip to true if you want column stats/null counts.
+    profiling:
+      enabled: false
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"

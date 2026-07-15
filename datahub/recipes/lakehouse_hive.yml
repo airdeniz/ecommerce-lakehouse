@@ -1,0 +1,29 @@
+# The lakehouse (bronze / silver / gold / meta / ops Iceberg tables).
+#
+# We ingest over the Spark Thrift Server (HiveServer2 on :10000) rather than the
+# native Iceberg source on purpose: this is the SAME proven access path dbt,
+# Superset and the MCP server already use, so it needs no extra catalog/S3
+# credentials wiring. The tables are catalogued under the `hive` platform; the
+# dbt recipe below also targets `hive`, which is what lets dbt model lineage
+# stitch onto these physical tables.
+#
+# spark-thrift's default catalog is `lakehouse` (the Iceberg JDBC catalog), so
+# the namespaces below resolve to lakehouse.bronze, lakehouse.silver, etc.
+source:
+  type: hive
+  config:
+    host_port: "spark-thrift:10000"
+    # No authentication — matches `beeline -u jdbc:hive2://spark-thrift:10000`.
+    schema_pattern:
+      allow:
+        - "bronze"
+        - "silver"
+        - "gold"
+        - "meta"
+        - "ops"
+    include_views: true
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"

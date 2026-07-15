@@ -1,0 +1,26 @@
+# CDC transport layer. Catalogs the Debezium topics (ecom.public.*, plus the
+# connect/datahub internal topics). The topics carry plain JSON (JsonConverter,
+# no Confluent Schema Registry), so DataHub records the topics without an Avro
+# schema — expected, not an error.
+source:
+  type: kafka
+  config:
+    connection:
+      bootstrap: "kafka:9092,kafka2:9092,kafka3:9092"
+    topic_patterns:
+      allow:
+        - "ecom\\..*"
+      # Hide DataHub's own plumbing + Kafka/Connect internals from the catalog.
+      deny:
+        - "^_.*"
+        - "^connect_.*"
+        - ".*MetadataChange.*"
+        - ".*MetadataAuditEvent.*"
+        - ".*DataHubUsageEvent.*"
+        - ".*PlatformEvent.*"
+        - ".*FailedMetadata.*"
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"

@@ -196,6 +196,29 @@ Connected to Spark Thrift via `hive://spark-thrift:10000`. Reads from `lakehouse
 A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the lakehouse to an AI agent such as Claude Desktop. It runs as a container in the pipeline network and reaches the warehouse through Spark Thrift, offering three tools: `list_tables`, `describe_table`, and `run_query` (read-only — DDL/DML is rejected).
 *Why:* Lets a non-technical user ask questions in plain language — *"which category sold the most?"*, *"find my top 5 customers by spend"* — and the agent discovers the schema and writes the SQL itself. The agent also applies business judgement: asked for "most valuable customers", it excludes cancelled and unpaid orders on its own, counting only realised (PAID) revenue. This turns the gold layer into a conversational analytics interface without building a custom NL-to-SQL service. See [mcp-server/README.md](mcp-server/README.md) for setup.
 
+### Catalog & Lineage Layer (optional)
+
+**DataHub (`datahub/`, `docker-compose.datahub.yml`)**
+An opt-in metadata catalog that ingests from every layer — the source OLTP DB,
+the Kafka CDC topics, the Iceberg lakehouse (over Spark Thrift), the dbt models,
+and the Superset dashboards — and stitches them into one searchable,
+column-level lineage graph. It runs as a **separate compose file** merged with
+the main one so the default `docker compose up` stays lean:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.datahub.yml up -d
+# UI: http://localhost:9002  (datahub / datahub)
+```
+
+*Why:* Today the pipeline's lineage is implicit — spread across ARCHITECTURE.md,
+the dbt DAG, and the `get_json_object` paths in the streaming job. DataHub makes
+it explicit and navigable: "which source column does `gold.mart_daily_revenue`
+depend on?" becomes a click-through. It reuses the existing Kafka (RF=3 internal
+topics) and DataHub's internal schema registry, and is **read-only** — it never
+writes to the pipeline, so the concurrent-Iceberg-writer invariant is untouched.
+The catalog is derived metadata, re-ingestable from the sources. See
+[datahub/README.md](datahub/README.md) for setup and the ingestion recipes.
+
 ## Design Deep-Dive
 
 The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
@@ -218,6 +241,7 @@ The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
 - [x] Phase 6 — Persistence: Kafka + Superset Postgres metadata
 - [x] Phase 7 — Multiple Consumers: stock monitoring service (Kafka fan-out)
 - [x] Phase 8 — AI Access Layer: MCP server for natural-language querying (Claude Desktop)
+- [x] Phase 9 — Catalog & Lineage: DataHub metadata catalog (optional, opt-in compose file)
 
 ## Known Limitations & Production Roadmap
 
@@ -287,7 +311,11 @@ Then connect Superset to Spark Thrift Server:
 | Kafka broker 2 | localhost:29093 | — | `kafka2_data` |
 | Kafka broker 3 | localhost:29094 | — | `kafka3_data` |
 | MCP Server | internal (via `docker exec`) | — | — |
+| DataHub UI *(optional)* | http://localhost:9002 | datahub / datahub | `datahub_es_data`, `datahub_mysql_data` |
+| DataHub GMS *(optional)* | localhost:8084 | — | — |
 
+> DataHub is opt-in and only starts with the extra compose file:
+> `docker compose -f docker-compose.yml -f docker-compose.datahub.yml up -d` (see [datahub/README.md](datahub/README.md)).
 > Debezium connector is registered automatically on startup via the `connector-init` service.
 > `docker compose down` (without `-v`) preserves all data via named volumes.
 

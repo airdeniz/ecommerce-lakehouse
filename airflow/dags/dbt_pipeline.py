@@ -31,4 +31,12 @@ with DAG(
         bash_command="cd /opt/airflow/dbt && dbt test --profiles-dir /opt/airflow/dbt",
     )
 
-    dbt_run >> dbt_test
+    # Emit target/catalog.json (and refresh manifest.json/run_results.json) so the
+    # optional DataHub dbt ingestion has full column-level metadata to read. Harmless
+    # when DataHub isn't running — it just writes artifacts into dbt/target.
+    dbt_docs_generate = BashOperator(
+        task_id="dbt_docs_generate",
+        bash_command="cd /opt/airflow/dbt && dbt docs generate --profiles-dir /opt/airflow/dbt",
+    )
+
+    dbt_run >> dbt_test >> dbt_docs_generate

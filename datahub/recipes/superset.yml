@@ -1,0 +1,21 @@
+# Superset — the consumption layer. Catalogs dashboards and charts, and links
+# each chart to the gold/silver dataset it reads, extending lineage all the way
+# to the BI surface.
+source:
+  type: superset
+  config:
+    connect_uri: "http://superset:8088"
+    username: "${SUPERSET_ADMIN_USER}"
+    password: "${SUPERSET_ADMIN_PASSWORD}"
+    provider: db
+    # Superset charts read the lakehouse over Spark Thrift, so map Superset's
+    # database back onto the same `hive` platform the tables were ingested under
+    # for chart->dataset lineage to resolve.
+    database_alias: {}
+    platform_instance_map:
+      spark: hive
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"

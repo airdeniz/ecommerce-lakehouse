@@ -1,0 +1,30 @@
+# dbt models — the highest-value source. Reads the artifacts dbt writes to
+# target/ and produces:
+#   * model-level lineage (stg_* -> core_* -> mart_*),
+#   * the dbt tests (incl. the warn_if/error_if relationship tests) as assertions,
+#   * model + column descriptions from the schema.yml files.
+#
+# manifest.json is written by every `dbt run`; catalog.json requires
+# `dbt docs generate` — the Airflow dbt_pipeline DAG runs both. run_results.json
+# is optional (test outcomes); it may be absent if only `dbt run` ran.
+#
+# target_platform: hive matches the lakehouse_hive recipe so the dbt models'
+# upstream/downstream edges stitch onto the physical Iceberg tables ingested
+# over Spark Thrift.
+source:
+  type: dbt
+  config:
+    manifest_path: "/dbt/target/manifest.json"
+    catalog_path: "/dbt/target/catalog.json"
+    run_results_paths:
+      - "/dbt/target/run_results.json"
+    target_platform: "hive"
+    # Surface the dbt tests as DataHub assertions.
+    entities_enabled:
+      test_results: "YES"
+      test_definitions: "YES"
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"

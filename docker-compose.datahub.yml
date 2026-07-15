@@ -1,0 +1,231 @@
+# DataHub — metadata catalog + lineage layer (OPT-IN, not part of the default stack).
+#
+# This is a SEPARATE compose file so the default `docker compose up` stays lean.
+# It is always run MERGED with the main file so the two share one project + one
+# network, which is what lets DataHub reach the existing kafka/postgres/spark-thrift
+# services and lets Airflow reach datahub-gms:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.datahub.yml up -d
+#
+# Design choices that keep this consistent with the rest of the project:
+#   * Reuses the existing 3-broker Kafka (no second Kafka/Zookeeper). DataHub's
+#     internal topics are created by datahub-kafka-setup with RF=3 — the same
+#     NOT_ENOUGH_REPLICAS trap the Debezium connect service documents (min ISR=2
+#     on this cluster means RF=1 topics can never commit).
+#   * Uses DataHub's INTERNAL schema registry (served by GMS), so no Confluent
+#     Schema Registry container is needed. The CDC topics are plain JSON anyway.
+#   * The catalog is DERIVED metadata (re-ingestable from the sources), exactly
+#     like silver/gold are rebuildable from bronze. A `down -v` wiping DataHub's
+#     volumes is recoverable by re-running ingestion — no source of truth here.
+#
+# Ports (host): 9002 DataHub UI, 9092-internal ES/MySQL are not exposed.
+# Default UI login: datahub / datahub.
+
+services:
+  # --- Storage backends -----------------------------------------------------
+  datahub-elasticsearch:
+    image: elasticsearch:7.17.9
+    container_name: ecom-datahub-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - datahub_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  datahub-mysql:
+    image: mysql:8.0
+    container_name: ecom-datahub-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_bin --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_DATABASE: datahub
+      MYSQL_USER: datahub
+      MYSQL_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub}
+      MYSQL_ROOT_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub}
+    volumes:
+      - datahub_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DATAHUB_DB_PASSWORD:-datahub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # --- One-shot setup jobs (mirror the connector-init / minio-init pattern) --
+  datahub-elasticsearch-setup:
+    image: acryldata/datahub-elasticsearch-setup:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-es-setup
+    depends_on:
+      datahub-elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_HOST: datahub-elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_PROTOCOL: http
+      USE_AWS_ELASTICSEARCH: "false"
+    restart: "no"
+
+  datahub-mysql-setup:
+    image: acryldata/datahub-mysql-setup:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-mysql-setup
+    depends_on:
+      datahub-mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: datahub-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub}
+      DATAHUB_DB_NAME: datahub
+    restart: "no"
+
+  datahub-kafka-setup:
+    image: acryldata/datahub-kafka-setup:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-kafka-setup
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092,kafka2:9092,kafka3:9092
+      USE_CONFLUENT_SCHEMA_REGISTRY: "false"
+      # This cluster runs min.insync.replicas=2, so DataHub's internal topics
+      # MUST be RF=3 or every produce fails with NOT_ENOUGH_REPLICAS (same trap
+      # the Debezium connect service calls out for its own storage topics).
+      PARTITIONS: "1"
+      REPLICATION_FACTOR: "3"
+    restart: "no"
+
+  # System bootstrap (ES index templates, migrations). GMS refuses to serve
+  # until this has completed on a fresh install.
+  datahub-system-update:
+    image: acryldata/datahub-upgrade:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-system-update
+    command: ["-u", "SystemUpdate"]
+    depends_on:
+      datahub-elasticsearch-setup:
+        condition: service_completed_successfully
+      datahub-mysql-setup:
+        condition: service_completed_successfully
+      datahub-kafka-setup:
+        condition: service_completed_successfully
+    environment:
+      ELASTICSEARCH_HOST: datahub-elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_PROTOCOL: http
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092,kafka2:9092,kafka3:9092
+      KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
+      SCHEMA_REGISTRY_TYPE: INTERNAL
+      EBEAN_DATASOURCE_USERNAME: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub}
+      EBEAN_DATASOURCE_HOST: datahub-mysql:3306
+      EBEAN_DATASOURCE_URL: "jdbc:mysql://datahub-mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8"
+      EBEAN_DATASOURCE_DRIVER: com.mysql.cj.jdbc.Driver
+    restart: "no"
+
+  # --- DataHub core services ------------------------------------------------
+  datahub-gms:
+    image: acryldata/datahub-gms:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-gms
+    depends_on:
+      datahub-system-update:
+        condition: service_completed_successfully
+      datahub-elasticsearch:
+        condition: service_healthy
+      datahub-mysql:
+        condition: service_healthy
+    ports:
+      - "8084:8080"
+    environment:
+      DATAHUB_SERVER_TYPE: quickstart
+      DATAHUB_TELEMETRY_ENABLED: "false"
+      # Embed all metadata-change consumers inside GMS so no separate mae/mce
+      # consumer containers are needed for a single-machine deployment.
+      MAE_CONSUMER_ENABLED: "true"
+      MCE_CONSUMER_ENABLED: "true"
+      PE_CONSUMER_ENABLED: "true"
+      GRAPH_SERVICE_IMPL: elasticsearch
+      ELASTICSEARCH_HOST: datahub-elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_PROTOCOL: http
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092,kafka2:9092,kafka3:9092
+      KAFKA_SCHEMAREGISTRY_URL: http://datahub-gms:8080/schema-registry/api/
+      SCHEMA_REGISTRY_TYPE: INTERNAL
+      EBEAN_DATASOURCE_USERNAME: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub}
+      EBEAN_DATASOURCE_HOST: datahub-mysql:3306
+      EBEAN_DATASOURCE_URL: "jdbc:mysql://datahub-mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8"
+      EBEAN_DATASOURCE_DRIVER: com.mysql.cj.jdbc.Driver
+      JAVA_OPTS: "-Xms1g -Xmx1g"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  datahub-frontend:
+    image: acryldata/datahub-frontend-react:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-frontend
+    depends_on:
+      datahub-gms:
+        condition: service_healthy
+    ports:
+      - "9002:9002"
+    environment:
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: "8080"
+      DATAHUB_SECRET: ${DATAHUB_SECRET:-YouKnowNothing}
+      DATAHUB_APP_VERSION: "1.0"
+      DATAHUB_PLAY_MEM_BUFFER_SIZE: "10MB"
+      JAVA_OPTS: "-Xms512m -Xmx512m -Dhttp.port=9002 -Dconfig.file=datahub-frontend/conf/application.conf -Dlogback.configurationFile=datahub-frontend/conf/logback.xml -Dlogback.debug=false -Dpidfile.path=/dev/null"
+      KAFKA_BOOTSTRAP_SERVER: kafka:9092,kafka2:9092,kafka3:9092
+      ELASTIC_CLIENT_HOST: datahub-elasticsearch
+      ELASTIC_CLIENT_PORT: "9200"
+
+  # --- Ingestion (one-shot; re-run to refresh the catalog) ------------------
+  # Populates the catalog from every source. Runs once on startup, like
+  # connector-init/minio-init. Re-run any time with:
+  #   docker compose -f docker-compose.yml -f docker-compose.datahub.yml \
+  #     run --rm datahub-ingestion
+  # The dbt recipe needs dbt/target/{manifest,catalog}.json, which the Airflow
+  # dbt_pipeline DAG produces (dbt run + dbt docs generate). If you ingest before
+  # the first dbt run, every other recipe still loads; only dbt is skipped.
+  datahub-ingestion:
+    image: acryldata/datahub-ingestion:${DATAHUB_VERSION:-v0.14.1}
+    container_name: ecom-datahub-ingestion
+    depends_on:
+      datahub-gms:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/ingest-all.sh"]
+    environment:
+      # Secrets referenced by the recipes via ${VAR} expansion.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      ICEBERG_DB_USER: ${ICEBERG_DB_USER}
+      ICEBERG_DB_PASSWORD: ${ICEBERG_DB_PASSWORD}
+      ICEBERG_DB_NAME: ${ICEBERG_DB_NAME}
+    volumes:
+      - ./datahub/recipes:/recipes:ro
+      - ./datahub/ingest-all.sh:/ingest-all.sh:ro
+      # Read-only mount of the dbt project so the dbt recipe can read target/.
+      - ./dbt:/dbt:ro
+    restart: "no"
+
+volumes:
+  datahub_es_data:
+  datahub_mysql_data:
