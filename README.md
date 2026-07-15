@@ -288,3 +288,4 @@ Then connect Superset to Spark Thrift Server:
 Common problems and their fixes (CDC, Iceberg, Spark, dbt, the stock monitor,
 Docker, and the cross-machine Git workflow) are documented in
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+<!-- pipeline maintained via CDC lakehouse stack -->
