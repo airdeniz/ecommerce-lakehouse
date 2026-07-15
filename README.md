@@ -18,6 +18,8 @@ This pipeline shows how to do that end-to-end:
 
 In short: it shows how to build the **same data infrastructure that companies like Trendyol, Hepsiburada or n11 run in production** — but with open-source tools and a single `docker compose up`.
 
+> 📖 **Background:** [For someone coming from a monolith — where do these open-source tools recognize each other, and who governs the ecosystem?](https://deniz-blog.vercel.app/en/blog/acik-kaynak-ekosistemi-kim-yonetiyor/)
+
 ## High-Level Architecture
 
 ```mermaid
@@ -127,6 +129,8 @@ Kafka Connect plugin that reads Postgres WAL via the `pgoutput` plugin and publi
 Message broker that decouples the producer (Debezium) from consumers (PySpark, stock monitor). Runs as a 3-broker KRaft cluster (`kafka`, `kafka2`, `kafka3`) — all three are both brokers and controllers. Topics are replicated with `RF=3` and `min.insync.replicas=2`. Topics: `ecom.public.orders`, `ecom.public.users`, `ecom.public.products`, `ecom.public.order_items`, `ecom.public.inventory`.
 *Why:* Without Kafka, every downstream consumer would have to connect directly to Postgres. Kafka acts as a durable buffer with multiple consumer support. Three brokers with `RF=3` mean every partition is replicated across the cluster, so it tolerates one broker failing without data loss or a write stall (`acks=all` still satisfied by 2 in-sync replicas), and a 3-node controller quorum survives one controller loss. On a single machine this is primarily for demonstrating replication/failover, not real hardware HA.
 
+> 📖 **Kafka deep dives:** [How a Kafka cluster works](https://deniz-blog.vercel.app/en/blog/kafka-cluster-mimarisi/) · [What a broker is — KRaft & Raft consensus](https://deniz-blog.vercel.app/en/blog/kafka-broker-nedir/) · [Partitions, offsets & ordering guarantees](https://deniz-blog.vercel.app/en/blog/kafka-partition-offset-siralama/) · [Partitioning strategies — why events are keyed by PK](https://deniz-blog.vercel.app/en/blog/kafka-partitioner-cesitleri/) · [Why no distributed system can be "CA" (CAP → PACELC)](https://deniz-blog.vercel.app/en/blog/neden-hicbir-dagitik-sistem-ca-olamaz/)
+
 **Redpanda Console**
 Web UI for inspecting Kafka topics, messages, and connector status.
 *Why:* Debugging streaming pipelines without a UI is painful. This is the "DevTools" of Kafka.
@@ -141,6 +145,8 @@ Structured Streaming job that:
 4. Writes to Iceberg bronze tables in MinIO
 
 *Why raw JSON:* Storing the whole payload instead of a fixed column list means a new source column is captured automatically — no bronze schema change, and the history is there when analytics eventually needs it. Fields are extracted from `raw_payload` in staging. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full rationale.
+
+> 📖 **Deep dives:** [What a DataFrame is, and why we write SQL inside PySpark](https://deniz-blog.vercel.app/en/blog/dataframe-ve-sql-vs-pyspark-sql/) · [Why isn't SQL as "flexible" as NoSQL? — the rigid-schema vs. raw-payload trade-off](https://deniz-blog.vercel.app/en/blog/sql-neden-nosql-kadar-esnek-degil/)
 
 **Stock Monitor (`stock-monitor/stock_monitor.py`)**
 A second, independent Kafka consumer (consumer group `stock-monitor-service`) that subscribes to `ecom.public.inventory` and raises a low-stock alert when a product drops below a threshold. Alerts are emitted to stdout **and** appended to the Iceberg table `lakehouse.ops.stock_alerts` (queryable from Superset/MCP; disable with `WRITE_ICEBERG_ALERTS=false`). Does not touch the analytics pipeline.
@@ -229,6 +235,8 @@ materialization**: `is_incremental()` filters bronze to only events newer than
 the last run, and `MERGE INTO` upserts changed rows into the existing silver
 table. The `unique_key` would be the business key (e.g. `order_id`), and the
 `ts_ms` column already in bronze serves as the high-water mark.
+
+> 📖 **Deep dive:** [When does data become "big data" — and does real-time actually require it?](https://deniz-blog.vercel.app/en/blog/bir-veri-ne-zaman-buyuk-veri-olur/)
 
 ## Getting Started
 
