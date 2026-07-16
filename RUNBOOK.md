@@ -3,6 +3,13 @@
 
 ```bash
 
+# DataHub is part of the stack: COMPOSE_FILE in .env already points at BOTH
+# compose files, so every plain `docker compose` command below includes DataHub
+# automatically (harmless if DataHub is not running). Nothing to set per shell.
+# If you ever need the main stack ONLY, override it for one command, e.g.:
+#   PowerShell:  $env:COMPOSE_FILE="docker-compose.yml"; docker compose up -d
+#   bash/zsh:    COMPOSE_FILE=docker-compose.yml docker compose up -d
+
 # Start everything from scratch (build images first)
 docker compose up -d --build
 # Delete containers AND volumes (wipes all data, fresh schema)
@@ -39,6 +46,10 @@ docker compose -f docker-compose.yml -f docker-compose.datahub.yml up -d
 
 # Stop only the DataHub services (data/volumes are kept)
 docker compose -f docker-compose.datahub.yml stop
+
+# Tear DataHub down completely, wiping its volumes (catalog metadata is lost).
+# Needs both files: the DataHub services depend_on services defined in the main compose file.
+docker compose -f docker-compose.yml -f docker-compose.datahub.yml down -v
 
 # Resume the stopped DataHub services
 docker compose -f docker-compose.yml -f docker-compose.datahub.yml start
@@ -80,6 +91,8 @@ their fixes see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 ## Lifecycle
 
 ```bash
+# These plain commands assume COMPOSE_FILE is set (see Quick Commands at top),
+# so DataHub comes up/down together with the main stack.
 docker compose up -d                 # start everything (detached)
 docker compose up -d --build         # rebuild images first (after code changes)
 docker compose stop                  # stop, keep volumes (quick pause)
