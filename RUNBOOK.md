@@ -1,34 +1,60 @@
 # Runbook
-
 ## Quick Commands (cheat sheet)
 
 ```bash
-#Bring up only the viewing/query stack (DBs, UIs, Thrift) — production tools stay down
-docker compose up -d postgres console superset airflow-webserver airflow-scheduler spark-thrift mcp-server
+
+# Start everything from scratch (build images first)
+docker compose up -d --build
+# Delete containers AND volumes (wipes all data, fresh schema)
+docker compose down -v
+
+# Resume after a stop (continue with existing data, fast — no rebuild)
+docker compose start
+# Pause everything, keep all data (resume later with `start`)
+docker compose stop
+
+
 # Keep the viewing tools up, stop the production tools
 docker stop ecom-generator ecom-connect ecom-pyspark ecom-stock-monitor
 # Resume the production tools
 docker start ecom-connect ecom-pyspark ecom-generator ecom-stock-monitor
+#Bring up only the viewing/query stack (DBs, UIs, Thrift) — production tools stay down
+docker compose up -d postgres console superset airflow-webserver airflow-scheduler spark-thrift mcp-server
+```
 
-# Start everything from scratch (build images first)
-docker compose up -d --build
+## Running dbt layers individually
 
-# Resume after a stop (continue with existing data, fast — no rebuild)
-docker compose start
+```bash
+docker exec ecom-airflow-scheduler dbt run --select staging --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # run the staging layer
+docker exec ecom-airflow-scheduler dbt run --select core    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # run the silver (core) layer
+docker exec ecom-airflow-scheduler dbt run --select mart    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # run the gold (mart) layer
+```
 
-# Pause everything, keep all data (resume later with `start`)
-docker compose stop
+## DataHub (opt-in) start / stop
 
+```bash
+# Bring DataHub up together with the main stack (first boot / after a config change).
+# Use this instead of `start`: it waits on the health gates and brings services up in order.
+docker compose -f docker-compose.yml -f docker-compose.datahub.yml up -d
+
+# Stop only the DataHub services (data/volumes are kept)
+docker compose -f docker-compose.datahub.yml stop
+
+# Resume the stopped DataHub services
+docker compose -f docker-compose.yml -f docker-compose.datahub.yml start
+
+# Re-ingest the catalog (dbt/target/{manifest,catalog}.json must exist)
+docker compose -f docker-compose.yml -f docker-compose.datahub.yml run --rm datahub-ingestion
+# UI: http://localhost:9002  (datahub / datahub)
+```
+
+```bash
 # FREEZE data generation only — keep query/dashboard/AI layer running.
 # Use this to query, build Superset dashboards, and ask the AI agent
 # against a fixed dataset that no longer grows.
 docker compose stop generator pyspark stock-monitor connect
 #   ...resume data flow later with:
 docker compose start generator pyspark stock-monitor connect
-
-# FULL RESET — delete containers AND volumes (wipes all data, fresh schema)
-docker compose down -v
-docker compose up -d --build
 
 # Run dbt to (re)build staging -> silver -> gold (after data
 # flows / a reset). Healthy run builds 9 models: PASS=9 WARN=0 ERROR=0.
@@ -135,7 +161,7 @@ docker exec ecom-kafka kafka-metadata-quorum \
 docker exec ecom-kafka kafka-topics --bootstrap-server kafka:9092 \
   --describe --topic ecom.public.orders
 
-# PySpark writing to bronze? (look for "Batch N: M kayit yazildi")
+# PySpark writing to bronze? (look for "Batch N: M rows written")
 docker logs ecom-pyspark --tail 20
 
 # generator emitting (and occasionally deleting) orders?
@@ -198,12 +224,4 @@ The pipeline (and `ecom-mcp-server`) must be running.
 docker image prune -a                 # reclaim space from unused images
 docker system df                      # show docker disk usage
 docker compose build --no-cache pyspark  # rebuild ignoring cache (stale code)
-```
-
-## dbt katmanlarını tek tek çalıştırma
-
-```bash
-docker exec ecom-airflow-scheduler dbt run --select staging --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-staging katmanı çalıştırma
-docker exec ecom-airflow-scheduler dbt run --select core    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-silver katmanı çalıştırma
-docker exec ecom-airflow-scheduler dbt run --select mart    --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt   # dbt-mart katmanı çalıştırma
 ```
