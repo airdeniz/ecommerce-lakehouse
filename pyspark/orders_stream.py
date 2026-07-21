@@ -162,16 +162,30 @@ def write_to_iceberg(table_name):
             batch_df.unpersist()
     return inner
 
+# Micro-batch trigger interval. Without an explicit trigger, Structured Streaming
+# fires micro-batches back-to-back as fast as it can drain Kafka, and every
+# non-empty batch produces a NEW Iceberg snapshot (metadata.json rewrite + a fresh
+# parquet file). Over a long-running dev session that is thousands of tiny files
+# and snapshots on MinIO that nothing ever cleans up -> unbounded disk growth.
+# Batching writes every TRIGGER_INTERVAL coalesces each interval's CDC events into
+# a single snapshot/file, cutting snapshot churn ~100x with no data loss (latency
+# rises to seconds, which is irrelevant for this pipeline). Override via .env.
+TRIGGER_INTERVAL = os.environ.get("TRIGGER_INTERVAL", "30 seconds")
+
 q1 = orders_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.orders")) \
+    .trigger(processingTime=TRIGGER_INTERVAL) \
     .option("checkpointLocation", "s3a://lakehouse/checkpoints/orders").start()
 
 q2 = users_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.users")) \
+    .trigger(processingTime=TRIGGER_INTERVAL) \
     .option("checkpointLocation", "s3a://lakehouse/checkpoints/users").start()
 
 q3 = products_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.products")) \
+    .trigger(processingTime=TRIGGER_INTERVAL) \
     .option("checkpointLocation", "s3a://lakehouse/checkpoints/products").start()
 
 q4 = order_items_df.writeStream.foreachBatch(write_to_iceberg("lakehouse.bronze.order_items")) \
+    .trigger(processingTime=TRIGGER_INTERVAL) \
     .option("checkpointLocation", "s3a://lakehouse/checkpoints/order_items").start()
 
 spark.streams.awaitAnyTermination()
