@@ -161,8 +161,8 @@ Redis directly:
 ```bash
 # live counters
 docker exec ecom-redis redis-cli GET metrics:orders:total
-docker exec ecom-redis redis-cli GET metrics:revenue:paid
-docker exec ecom-redis redis-cli HGETALL metrics:orders:status      # CREATED/PAID/CANCELLED
+docker exec ecom-redis redis-cli GET metrics:revenue:net            # paid states minus refunds
+docker exec ecom-redis redis-cli HGETALL metrics:orders:status      # full lifecycle breakdown
 docker exec ecom-redis redis-cli HGETALL metrics:orders:by_city     # orders per city
 
 # trending products over the sliding window, as the UI computes it

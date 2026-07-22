@@ -288,14 +288,14 @@ change that adds, removes, or resizes source files.
 
 | Type | Kind | Lines | Share | In GitHub bar? |
 | --- | --- | ---: | ---: | :---: |
-| Markdown | Markup (prose) | 1556 | 30.7% | — |
-| Python | Programming language | 1354 | 26.7% | ✅ |
-| YAML | Data / config format | 1275 | 25.2% | — |
-| SQL | Query language | 525 | 10.4% | — |
-| Shell | Scripting language | 182 | 3.6% | ✅ |
-| Dockerfile | Config DSL | 151 | 3.0% | ✅ |
+| Python | Programming language | 1706 | 31.1% | ✅ |
+| Markdown | Markup (prose) | 1560 | 28.4% | — |
+| YAML | Data / config format | 1294 | 23.6% | — |
+| SQL | Query language | 558 | 10.2% | — |
+| Shell | Scripting language | 182 | 3.3% | ✅ |
+| Dockerfile | Config DSL | 163 | 3.0% | ✅ |
 | JSON | Data format | 25 | 0.5% | — |
-| **Total** | | **5068** | **100%** | |
+| **Total** | | **5488** | **100%** | |
 
 > **Why GitHub shows only Python/Dockerfile/Shell:** GitHub's language bar
 > is computed by [Linguist](https://github.com/github-linguist/linguist),

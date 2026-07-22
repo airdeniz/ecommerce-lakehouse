@@ -14,7 +14,9 @@ final AS (
         SUM(oi.line_total) AS total_revenue
     FROM order_items oi
     LEFT JOIN orders o ON oi.order_id = o.order_id
-    WHERE o.status = 'PAID'
+    -- Revenue = paid, not-yet-reversed orders (PAID + fulfilment states), so
+    -- delivered/shipped sales are counted, not just orders still sitting at PAID.
+    WHERE o.status IN {{ revenue_statuses() }}
       AND o.is_deleted = FALSE
       AND oi.is_deleted = FALSE
     GROUP BY oi.category

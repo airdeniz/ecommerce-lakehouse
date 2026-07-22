@@ -30,8 +30,8 @@ boot. Lose Redis, restart the service, and it repopulates itself from the stream
 WHAT IT MAINTAINS IN REDIS
 --------------------------
   metrics:orders:total     (int)    orders created since the first CDC event
-  metrics:orders:status    (hash)   live CREATED / PAID / CANCELLED counts
-  metrics:revenue:paid     (float)  summed total_amount of orders that reached PAID
+  metrics:orders:status    (hash)   live count per lifecycle status
+  metrics:revenue:net      (float)  revenue in paid states, less reversals (refunds)
   metrics:orders:by_city   (hash)   created-order count per customer city
   metrics:events:processed (int)    CDC events consumed (ops metric)
   metrics:updated_at       (str)    ISO timestamp of the last processed event
@@ -75,6 +75,12 @@ TRENDING_TTL_S = (TRENDING_WINDOW_MIN + 10) * 60
 # Redis keys this service owns. Cleared on startup so every replay rebuilds a
 # clean state instead of doubling onto whatever a previous run left behind.
 KEY_PREFIXES = ["metrics:", "trending:", "dim:"]
+
+# States where money is currently recognised as revenue: paid and not yet
+# reversed. Revenue is added once when an order first enters any of these states
+# and subtracted if it later leaves them (e.g. -> REFUNDED). Mirrors the dbt
+# revenue_statuses() macro so the live counter and the batch marts agree.
+REVENUE_STATUSES = {"PAID", "PREPARING", "SHIPPED", "DELIVERED"}
 
 
 def connect_redis():
@@ -175,6 +181,11 @@ def preload_dimensions(r):
 # ---------------------------------------------------------------------------
 # Fact handlers — orders (counts / revenue / city) and order_items (trending).
 # ---------------------------------------------------------------------------
+def _amount(row):
+    val = row.get("total_amount") if row else None
+    return float(val) if val is not None else 0.0
+
+
 def handle_order(r, payload):
     op = payload.get("op")
     after, before = payload.get("after"), payload.get("before")
@@ -186,27 +197,36 @@ def handle_order(r, payload):
         r.hincrby("metrics:orders:status", status, 1)
         city = r.hget("dim:user_city", str(after.get("user_id"))) or "Unknown"
         r.hincrby("metrics:orders:by_city", city, 1)
-        # A snapshot row may already be PAID; count its revenue once.
-        if status == "PAID" and after.get("total_amount") is not None:
-            r.incrbyfloat("metrics:revenue:paid", float(after["total_amount"]))
+        # A row may be created/snapshotted already in a revenue state; recognise
+        # its revenue once here (the transition path below won't see its arrival).
+        if status in REVENUE_STATUSES:
+            r.incrbyfloat("metrics:revenue:net", _amount(after))
         return
 
-    # Status transition (CREATED -> PAID / CANCELLED).
+    # Status transition along the lifecycle.
     if op == "u" and after:
         new_status = after.get("status")
         old_status = before.get("status") if before else None
         if old_status and new_status and old_status != new_status:
             r.hincrby("metrics:orders:status", old_status, -1)
             r.hincrby("metrics:orders:status", new_status, 1)
-            if new_status == "PAID" and after.get("total_amount") is not None:
-                r.incrbyfloat("metrics:revenue:paid", float(after["total_amount"]))
+        was_rev = old_status in REVENUE_STATUSES
+        is_rev = new_status in REVENUE_STATUSES
+        if is_rev and not was_rev:          # first entry into a revenue state
+            r.incrbyfloat("metrics:revenue:net", _amount(after))
+        elif was_rev and not is_rev:        # sale reversed (e.g. -> REFUNDED)
+            r.incrbyfloat("metrics:revenue:net", -_amount(after))
         return
 
-    # Delete (OLTP cleanup of a cancelled order) — keep the status hash honest.
+    # Delete (OLTP cleanup) — keep the status hash honest, and reverse revenue if
+    # the deleted order was still in a revenue state (generator only deletes
+    # CANCELLED/REFUNDED, so normally a no-op for revenue).
     if op == "d" and before:
         old_status = before.get("status")
         if old_status:
             r.hincrby("metrics:orders:status", old_status, -1)
+        if old_status in REVENUE_STATUSES:
+            r.incrbyfloat("metrics:revenue:net", -_amount(before))
 
 
 def handle_order_item(r, payload):

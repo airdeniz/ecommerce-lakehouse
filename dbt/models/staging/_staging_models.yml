@@ -14,11 +14,14 @@ models:
         data_tests:
           - not_null
       - name: status
-        description: Latest order status in the CDC stream.
+        description: >
+          Latest order status in the CDC stream. Full lifecycle: CREATED -> PAID
+          -> PREPARING -> SHIPPED -> DELIVERED, with CANCELLED (unpaid), RETURNED
+          and REFUNDED branches.
         data_tests:
           - not_null
           - accepted_values:
-              values: ['CREATED', 'PAID', 'CANCELLED']
+              values: ['CREATED', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REFUNDED']
       - name: total_amount
         data_tests:
           - not_null

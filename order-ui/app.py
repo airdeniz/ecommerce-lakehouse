@@ -103,6 +103,16 @@ COLTYPES = {
 }
 
 
+# Steady-state status mix for the "random orders" burst, so a single click seeds
+# a realistic spread across the whole lifecycle instead of only CREATED/PAID/
+# CANCELLED. (weight is relative.) The generator walks orders through the
+# lifecycle over time; this is the one-shot snapshot equivalent.
+RANDOM_STATUS_MIX = [
+    ("DELIVERED", 42), ("SHIPPED", 12), ("PREPARING", 8), ("PAID", 8),
+    ("CREATED", 8), ("CANCELLED", 12), ("RETURNED", 5), ("REFUNDED", 5),
+]
+
+
 def get_conn():
     return psycopg2.connect(DSN)
 
@@ -230,13 +240,12 @@ def random_orders():
                 chosen = random.sample(product_ids, k=min(k, len(product_ids)))
                 items = [(pid, random.randint(1, 4)) for pid in chosen]
                 order_id, total, n = _create_order(cur, user_id, items)
-                # ~70% PAID, ~15% CANCELLED (emits an extra 'u' event), rest CREATED.
-                roll = random.random()
-                status = "CREATED"
-                if roll < 0.70:
-                    status = "PAID"
-                elif roll < 0.85:
-                    status = "CANCELLED"
+                # Draw a realistic lifecycle status; anything past CREATED emits an
+                # extra 'u' event, exercising the CDC update path.
+                status = random.choices(
+                    [s for s, _ in RANDOM_STATUS_MIX],
+                    weights=[w for _, w in RANDOM_STATUS_MIX], k=1,
+                )[0]
                 if status != "CREATED":
                     cur.execute("UPDATE orders SET status = %s WHERE order_id = %s", (status, order_id))
                 created.append({"order_id": order_id, "user_id": user_id, "total": total, "items": n, "status": status})
@@ -291,7 +300,7 @@ def live():
     try:
         r = get_redis()
         total = int(r.get("metrics:orders:total") or 0)
-        revenue = float(r.get("metrics:revenue:paid") or 0.0)
+        revenue = float(r.get("metrics:revenue:net") or 0.0)
         events = int(r.get("metrics:events:processed") or 0)
         updated = r.get("metrics:updated_at")
         status = {k: int(v) for k, v in (r.hgetall("metrics:orders:status") or {}).items()}
@@ -302,9 +311,11 @@ def live():
         trending = compute_trending(r, top=10)
     except redis_lib.exceptions.RedisError as e:
         return jsonify({"ok": False, "error": f"serving layer unavailable: {e}"}), 503
+    delivered_rate = round(status.get("DELIVERED", 0) / total * 100) if total else 0
     return jsonify({
-        "ok": True, "total_orders": total, "revenue_paid": round(revenue, 2),
+        "ok": True, "total_orders": total, "revenue_net": round(revenue, 2),
         "events": events, "updated_at": updated, "status": status,
+        "delivered_rate": delivered_rate,
         "by_city": by_city, "trending": trending, "window_min": TRENDING_WINDOW_MIN,
     })
 
@@ -335,8 +346,10 @@ INDEX_HTML = """<!doctype html>
   .tabpanel.hidden { display:none; }
   .detail { max-width:660px; margin:0 auto; }
   .badge { display:inline-block; padding:3px 11px; border-radius:20px; font-size:12px; font-weight:700; }
-  .b-CREATED{background:#334155;color:#cbd5e1;} .b-PAID{background:#14532d;color:#4ade80;}
-  .b-CANCELLED{background:#4c1d24;color:#f87171;}
+  .b-CREATED{background:#334155;color:#cbd5e1;} .b-PAID{background:#1e3a8a;color:#93c5fd;}
+  .b-PREPARING{background:#0c4a6e;color:#7dd3fc;} .b-SHIPPED{background:#4c1d95;color:#c4b5fd;}
+  .b-DELIVERED{background:#14532d;color:#4ade80;} .b-CANCELLED{background:#4c1d24;color:#f87171;}
+  .b-RETURNED{background:#78350f;color:#fcd34d;} .b-REFUNDED{background:#4c0519;color:#fda4af;}
   .kv { display:flex; gap:20px; flex-wrap:wrap; color:#9aa6c0; font-size:13px; margin:8px 0 2px; }
   .kv b { color:#e6e9ef; }
   table.items-tbl { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
@@ -412,7 +425,11 @@ INDEX_HTML = """<!doctype html>
     <div class="items" id="ord_items"></div>
     <button class="ghost" onclick="addItemLine()">+ ürün ekle</button>
     <label>Durum</label>
-    <select id="ord_status"><option>CREATED</option><option>PAID</option><option>CANCELLED</option></select>
+    <select id="ord_status">
+      <option>CREATED</option><option>PAID</option><option>PREPARING</option>
+      <option>SHIPPED</option><option>DELIVERED</option><option>CANCELLED</option>
+      <option>RETURNED</option><option>REFUNDED</option>
+    </select>
     <button onclick="submitOrder()">Siparişi oluştur</button>
   </div>
 
@@ -476,6 +493,7 @@ INDEX_HTML = """<!doctype html>
       Redis <b>serving layer</b>'dan canlı okunur (realtime-aggregator, Kafka → Redis). Warehouse/dbt değil; 2 sn'de bir yenilenir.
     </div>
     <div class="stats" id="live_stats"><span class="muted">Yükleniyor…</span></div>
+    <div class="card" style="margin-top:16px"><h2>📦 Sipariş statü dağılımı (yaşam döngüsü)</h2><div id="live_status"></div></div>
     <div class="live-grid">
       <div class="card"><h2>🏙️ Şehir bazında sipariş (canlı)</h2><div id="live_city"></div></div>
       <div class="card"><h2>🔥 Trend ürünler <span class="muted" id="live_window"></span></h2><div id="live_trending"></div></div>
@@ -564,11 +582,19 @@ async function refreshLive() {
   const n = x => (x||0).toLocaleString('tr');
   stats.innerHTML = `
     <div class="stat"><div class="n">${n(d.total_orders)}</div><div class="l">Toplam sipariş</div></div>
-    <div class="stat"><div class="n">${d.revenue_paid.toLocaleString('tr',{maximumFractionDigits:0})}₺</div><div class="l">Ödenen ciro</div></div>
-    <div class="stat"><div class="n">${n(s.PAID)}</div><div class="l">PAID</div></div>
-    <div class="stat"><div class="n">${n(s.CREATED)}</div><div class="l">CREATED (bekleyen)</div></div>
-    <div class="stat"><div class="n">${n(s.CANCELLED)}</div><div class="l">CANCELLED</div></div>
+    <div class="stat"><div class="n">${d.revenue_net.toLocaleString('tr',{maximumFractionDigits:0})}₺</div><div class="l">Net ciro (iadeler düşülü)</div></div>
+    <div class="stat"><div class="n">${n(d.delivered_rate)}%</div><div class="l">Teslim oranı</div></div>
     <div class="stat"><div class="n">${n(d.events)}</div><div class="l">İşlenen CDC olayı</div></div>`;
+  // Status breakdown in canonical lifecycle order, colour-coded like the badges.
+  const ORDER = ['CREATED','PAID','PREPARING','SHIPPED','DELIVERED','CANCELLED','RETURNED','REFUNDED'];
+  const COLOR = {CREATED:'#64748b',PAID:'#3b82f6',PREPARING:'#0ea5e9',SHIPPED:'#8b5cf6',
+                 DELIVERED:'#16a34a',CANCELLED:'#ef4444',RETURNED:'#f59e0b',REFUNDED:'#e11d48'};
+  const rows = ORDER.filter(k=>s[k]).map(k=>({label:k, val:s[k], color:COLOR[k]}));
+  const maxS = Math.max(1, ...rows.map(r=>r.val));
+  document.getElementById('live_status').innerHTML = rows.length ? rows.map(r=>
+    `<div class="bar-row"><span class="name">${r.label}</span>
+      <span class="track"><span class="bar" style="width:${Math.round(r.val/maxS*100)}%;background:${r.color}"></span></span>
+      <span class="val">${r.val}</span></div>`).join('') : '<span class="muted">veri yok</span>';
   document.getElementById('live_city').innerHTML =
     bars(d.by_city.map(c=>({label:c.city, val:c.count})));
   document.getElementById('live_window').textContent = `(son ${d.window_min} dk)`;

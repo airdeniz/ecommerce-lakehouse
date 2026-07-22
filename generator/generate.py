@@ -7,6 +7,28 @@ import psycopg2
 
 DSN = os.getenv("PG_DSN", "host=localhost port=5433 dbname=ecommerce user=postgres password=postgres")
 
+# Order lifecycle as a state machine. For each current status, the possible next
+# transitions as (next_status, relative_weight, min_delay_s, max_delay_s). A
+# next_status of None means "stay here" — terminal for the demo. Delays are
+# compressed to seconds so a full lifecycle plays out within a couple of minutes;
+# in real life these span hours to days.
+#
+#   CREATED -> PAID -> PREPARING -> SHIPPED -> DELIVERED        (happy path)
+#   CREATED -> CANCELLED                                        (unpaid drop-off)
+#   PAID / PREPARING -> REFUNDED                                (paid then reversed)
+#   DELIVERED -> RETURNED -> REFUNDED                           (return flow)
+LIFECYCLE = {
+    "CREATED":   [("PAID", 82, 5, 20), ("CANCELLED", 18, 5, 20)],
+    "PAID":      [("PREPARING", 90, 8, 25), ("REFUNDED", 6, 8, 25), (None, 4, 0, 0)],
+    "PREPARING": [("SHIPPED", 94, 8, 30), ("REFUNDED", 6, 8, 30)],
+    "SHIPPED":   [("DELIVERED", 96, 10, 40), (None, 4, 0, 0)],
+    "DELIVERED": [(None, 90, 0, 0), ("RETURNED", 10, 15, 45)],
+    "RETURNED":  [("REFUNDED", 100, 8, 25)],
+    "CANCELLED": [(None, 100, 0, 0)],
+    "REFUNDED":  [(None, 100, 0, 0)],
+}
+
+
 def build_profiles(user_ids):
     """Assign each user a stable behavioural profile for this run.
 
@@ -37,29 +59,37 @@ def main():
 
     profiles = build_profiles(user_ids)
 
-    # Status transitions (CREATED -> PAID/CANCELLED) are not applied inline.
-    # In real life an order sits in CREATED for a while before it is paid or
-    # cancelled, so we schedule the transition for at least MIN_STATUS_DELAY_S
-    # seconds later and apply it on a subsequent loop iteration. Applying it in
-    # the same iteration produced CREATED and its UPDATE within microseconds of
-    # each other, which looked fake in the CDC stream.
-    MIN_STATUS_DELAY_S = 5.0
-    MAX_STATUS_DELAY_S = 20.0
+    # Status transitions are not applied inline. In real life an order sits in a
+    # state for a while before it moves on, so each transition is scheduled for a
+    # short delay later and applied on a subsequent loop iteration. Applying it in
+    # the same iteration produced a state and its UPDATE within microseconds of
+    # each other, which looked fake in the CDC stream. An order walks the LIFECYCLE
+    # state machine one hop at a time: applying a hop schedules the next one.
     pending = []  # list of (due_ts, order_id, new_status)
 
+    def schedule_next(order_id, from_status, now):
+        """Pick and schedule the next lifecycle hop for an order (if any)."""
+        options = LIFECYCLE.get(from_status)
+        if not options:
+            return
+        idx = random.choices(range(len(options)), weights=[o[1] for o in options], k=1)[0]
+        to_status, _weight, dmin, dmax = options[idx]
+        if to_status is None:
+            return  # terminal state for this order
+        due = now + random.uniform(dmin, dmax)
+        pending.append((due, order_id, to_status))
+
     def flush_pending(now):
-        """Apply any scheduled status transitions whose delay has elapsed."""
-        still_pending = []
-        for due_ts, order_id, new_status in pending:
-            if due_ts <= now:
-                cur.execute(
-                    "UPDATE orders SET status = %s WHERE order_id = %s",
-                    (new_status, order_id),
-                )
-                print(f"  -> Order {order_id} -> {new_status}")
-            else:
-                still_pending.append((due_ts, order_id, new_status))
-        pending[:] = still_pending
+        """Apply due transitions, then schedule each order's following hop."""
+        due_now = [p for p in pending if p[0] <= now]
+        pending[:] = [p for p in pending if p[0] > now]
+        for _due_ts, order_id, new_status in due_now:
+            cur.execute(
+                "UPDATE orders SET status = %s WHERE order_id = %s",
+                (new_status, order_id),
+            )
+            print(f"  -> Order {order_id} -> {new_status}")
+            schedule_next(order_id, new_status, now)
 
     print(f"Order generator started ({len(user_ids)} users, {len(products)} products). "
           "Press Ctrl+C to stop.")
@@ -102,25 +132,21 @@ def main():
                 (qty, product_id),
             )
 
-        # Decide the order's eventual fate now, but defer the actual UPDATE so
-        # a realistic gap sits between the CREATED insert and its transition.
-        roll = random.random()
-        if roll < 0.70:
-            due = time.time() + random.uniform(MIN_STATUS_DELAY_S, MAX_STATUS_DELAY_S)
-            pending.append((due, order_id, "PAID"))
-        elif roll < 0.85:
-            due = time.time() + random.uniform(MIN_STATUS_DELAY_S, MAX_STATUS_DELAY_S)
-            pending.append((due, order_id, "CANCELLED"))
+        # The order starts at CREATED; schedule its first lifecycle hop. Each
+        # applied hop schedules the next, so the order walks the state machine
+        # (PAID -> PREPARING -> SHIPPED -> DELIVERED, with cancel/return branches)
+        # over time instead of jumping straight to a final status.
+        schedule_next(order_id, "CREATED", time.time())
 
         print(f"Order {order_id} | user {user_id} | amount {round(total,2)} | {len(items)} items")
 
-        # Occasionally (~5%) we delete an old CANCELLED order. In real life
-        # cancelled orders may be cleaned out of the OLTP after a while.
-        # This lets CDC delete (op='d') events flow through the pipeline;
+        # Occasionally (~5%) we delete an old terminal-reversed order (CANCELLED or
+        # REFUNDED). In real life such orders may be cleaned out of the OLTP after
+        # a while. This lets CDC delete (op='d') events flow through the pipeline;
         # downstream they are captured as is_deleted=true (soft delete).
         if random.random() < 0.05:
             cur.execute(
-                "SELECT order_id FROM orders WHERE status = 'CANCELLED' ORDER BY random() LIMIT 1"
+                "SELECT order_id FROM orders WHERE status IN ('CANCELLED', 'REFUNDED') ORDER BY random() LIMIT 1"
             )
             row = cur.fetchone()
             if row:

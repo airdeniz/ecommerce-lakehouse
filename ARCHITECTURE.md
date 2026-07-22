@@ -132,9 +132,10 @@ business questions without requiring analysts to write complex joins.
 
 ## Handling Updates: CDC Event Ordering
 
-In a CDC pipeline a single row changes over time. An order moves
-`CREATED → PAID` (or `CANCELLED`), so Debezium emits **several events for the
-same `order_id`**. Bronze is append-only by design, so it stores every version
+In a CDC pipeline a single row changes over time. An order walks its lifecycle
+`CREATED → PAID → PREPARING → SHIPPED → DELIVERED` (with `CANCELLED` / `RETURNED`
+/ `REFUNDED` branches), so Debezium emits **several events for the same
+`order_id`**. Bronze is append-only by design, so it stores every version
 of the row — the silver layer is responsible for collapsing them down to the
 latest state. The hard part is deciding which version *is* the latest.
 
@@ -181,8 +182,11 @@ that already existed when CDC started), `c` (insert), `u` (update), `d`
   CDC was switched on. They flow through to silver like any create.
 - **`CREATED` orders are kept.** `CREATED` is a valid lifecycle state, not
   noise — it powers analyses like unpaid-cart / abandoned-order reporting. The
-  core model keeps every status (`CREATED`, `PAID`, `CANCELLED`) rather than
-  filtering to terminal states only.
+  core model keeps every status across the full lifecycle (`CREATED`, `PAID`,
+  `PREPARING`, `SHIPPED`, `DELIVERED`, `CANCELLED`, `RETURNED`, `REFUNDED`)
+  rather than filtering to terminal states only. Revenue is recognised for the
+  paid, not-yet-reversed states — see the `revenue_statuses()` dbt macro, which
+  `core_orders` and the marts share so the rule lives in exactly one place.
 - **Deletes are handled as soft deletes (deliberate choice).** When a row is
   deleted in Postgres, Debezium emits `op = 'd'` with the row's values in
   `payload.before` (and `payload.after` null). The streaming job reads both

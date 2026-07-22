@@ -4,8 +4,9 @@ models:
   - name: core_orders
     description: >
       Business-ready orders, enriched with user attributes. All lifecycle
-      statuses are kept (CREATED, PAID, CANCELLED). Deleted source rows are
-      retained with is_deleted = true (soft delete) rather than dropped.
+      statuses are kept (CREATED, PAID, PREPARING, SHIPPED, DELIVERED, CANCELLED,
+      RETURNED, REFUNDED). Deleted source rows are retained with is_deleted = true
+      (soft delete) rather than dropped.
     columns:
       - name: order_id
         data_tests:
@@ -22,7 +23,7 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ['CREATED', 'PAID', 'CANCELLED']
+              values: ['CREATED', 'PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED', 'REFUNDED']
       - name: is_deleted
         description: >
           True when the most recent event for this order was a Debezium delete
@@ -35,10 +36,25 @@ models:
               values: [true, false]
               quote: false
       - name: paid_amount
-        description: total_amount when PAID, else 0.
+        description: >
+          total_amount when the order is in a revenue state (PAID, PREPARING,
+          SHIPPED, DELIVERED), else 0. Revenue basis for the marts.
         data_tests:
           - not_null
       - name: is_cancelled
+        description: 1 when status = CANCELLED (unpaid cancellation), else 0.
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1]
+      - name: is_returned
+        description: 1 when status = RETURNED, else 0.
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1]
+      - name: is_refunded
+        description: 1 when status = REFUNDED (sale reversed, money returned), else 0.
         data_tests:
           - not_null
           - accepted_values:
