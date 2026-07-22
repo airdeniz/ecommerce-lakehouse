@@ -12,9 +12,38 @@ INSERT INTO users (full_name, city) VALUES
   ('Zeynep Sahin', 'Bursa'),
   ('Can Aydin', 'Antalya');
 
--- ~295 more synthetic users. Names are composed from first/last-name pools and
--- cities are drawn from a fixed set, so customer behaviour can vary by city and
--- the analytics tables have enough rows to be meaningful.
+-- ~295 more synthetic users. Names are composed from first/last-name pools.
+-- Cities are drawn *proportionally to real population* (TUIK 2023, in thousands)
+-- rather than uniformly, so the order stream mirrors reality: Istanbul dominates,
+-- the big metros follow, and small provinces contribute only a trickle. Each user
+-- draws a random point on the cumulative population range and lands in the city
+-- whose [lo, hi) band covers it, giving a population-weighted assignment.
+WITH city_w(city, pop) AS (
+  VALUES
+    ('Istanbul',  15907),
+    ('Ankara',     5803),
+    ('Izmir',      4479),
+    ('Bursa',      3214),
+    ('Antalya',    2696),
+    ('Konya',      2296),
+    ('Adana',      2270),
+    ('Gaziantep',  2154),
+    ('Mersin',     1917),
+    ('Kayseri',    1453),
+    ('Samsun',     1379),
+    ('Eskisehir',   915)
+),
+city_cum AS (
+  SELECT
+    city,
+    sum(pop) OVER (ORDER BY pop DESC, city) - pop AS lo,
+    sum(pop) OVER (ORDER BY pop DESC, city)       AS hi
+  FROM city_w
+),
+gen AS (
+  SELECT i, random() * (SELECT sum(pop) FROM city_w) AS pick
+  FROM generate_series(1, 295) AS s(i)
+)
 INSERT INTO users (full_name, city)
 SELECT
   (ARRAY['Ahmet','Elif','Mehmet','Zeynep','Can','Ayse','Mustafa','Fatma',
@@ -23,9 +52,8 @@ SELECT
   || ' ' ||
   (ARRAY['Yilmaz','Demir','Kaya','Sahin','Aydin','Celik','Arslan','Dogan',
          'Kilic','Ozturk','Aksoy','Korkmaz','Yildiz','Turan','Kara'])[1 + ((i / 20) % 15)],
-  (ARRAY['Istanbul','Ankara','Izmir','Bursa','Antalya','Adana','Konya',
-         'Gaziantep','Kayseri','Mersin','Eskisehir','Samsun'])[1 + (i % 12)]
-FROM generate_series(1, 295) AS s(i);
+  (SELECT city FROM city_cum WHERE gen.pick >= lo AND gen.pick < hi LIMIT 1)
+FROM gen;
 
 -- The original eight named products (kept from the original seed).
 INSERT INTO products (product_id, name, category, price) VALUES
