@@ -19,7 +19,8 @@ cheat sheet; `TROUBLESHOOTING.md` has failure-mode fixes.
 
 ```
 generator → Postgres (WAL) → Debezium → Kafka → PySpark → Iceberg bronze (MinIO)
-                                          └→ stock-monitor (independent consumer → lakehouse.ops.stock_alerts)
+                                          ├→ stock-monitor (independent consumer → lakehouse.ops.stock_alerts)
+                                          └→ realtime-aggregator (independent consumer → Redis serving layer → order-ui live tab)
 bronze → dbt (staging views → silver → gold) → Spark Thrift → Superset / MCP server
 ```
 
@@ -51,6 +52,14 @@ bronze → dbt (staging views → silver → gold) → Spark Thrift → Superset
 - **Deletes are soft deletes, applied uniformly to all tables.** `op = 'd'` events are
   kept (coalescing `before`/`after` for the key); staging sets `is_deleted = true` and
   marts exclude those rows from business metrics. `tombstones.on.delete` is `false`.
+- **Redis is a derived cache, never a source of truth.** `realtime-aggregator`
+  maintains live metrics (orders/revenue/by-city/trending) in Redis as the speed
+  layer beside the batch lakehouse. It **commits no Kafka offsets** and replays
+  every topic from `earliest` on each boot, so Redis is fully rebuildable from the
+  Kafka log — a restart repopulates it. Don't add offset commits or treat Redis
+  state as authoritative. Trending is per-minute ZSETs summed on read, anchored on
+  `metrics:last_event_min` (event time), not wall-clock, so it survives clock skew
+  and backlog replay.
 - **Referential-integrity tests warn, not fail, on tail lag.** `orders` and
   `order_items` are independent streams, so brief orphan rows are expected eventual
   consistency. Relationship tests use `warn_if: ">0"` / `error_if: ">500"` — keep this

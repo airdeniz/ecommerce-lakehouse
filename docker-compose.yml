@@ -189,10 +189,56 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       PG_DSN: ${PG_DSN}
+      # Read-only view onto the real-time serving layer (realtime-aggregator).
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      TRENDING_WINDOW_MIN: ${TRENDING_WINDOW_MIN:-60}
     ports:
       - "8085:8090"
+
+  # Low-latency serving layer for the real-time aggregator. Holds only derived,
+  # rebuildable counters (not source data), so it is a plain single-node Redis.
+  # A light RDB snapshot keeps counters across a restart; if the volume is lost,
+  # realtime-aggregator repopulates everything from Kafka on its next boot.
+  redis:
+    image: redis:7-alpine
+    container_name: ecom-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Real-time aggregator: consumes the CDC topics and maintains pre-aggregated
+  # live metrics (orders, revenue, per-city, trending products) in Redis — the
+  # "speed layer" beside the batch lakehouse. Mirrors the stock-monitor fan-out
+  # pattern: an independent consumer group, no change to the existing pipeline.
+  realtime-aggregator:
+    build: ./realtime-aggregator
+    container_name: ecom-realtime-aggregator
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+      connector-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092,kafka2:9092,kafka3:9092
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      TRENDING_WINDOW_MIN: ${TRENDING_WINDOW_MIN:-60}
 
   stock-monitor:
     build: ./stock-monitor
@@ -500,3 +546,4 @@ volumes:
   kafka2_data:
   kafka3_data:
   iceberg_db_data:
+  redis_data:

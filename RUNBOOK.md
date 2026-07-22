@@ -152,6 +152,30 @@ docker exec -it ecom-mcp-server python -c "import server; print(server.describe_
 docker exec -it ecom-mcp-server python -c "import server; print(server.run_query('SELECT * FROM lakehouse.gold.mart_sales_by_category'))"
 ```
 
+## Real-time serving layer (Redis)
+
+The `realtime-aggregator` service maintains live pre-aggregated metrics in Redis;
+the order-ui **"Canlı Metrikler"** tab (http://localhost:8085) reads them. Inspect
+Redis directly:
+
+```bash
+# live counters
+docker exec ecom-redis redis-cli GET metrics:orders:total
+docker exec ecom-redis redis-cli GET metrics:revenue:paid
+docker exec ecom-redis redis-cli HGETALL metrics:orders:status      # CREATED/PAID/CANCELLED
+docker exec ecom-redis redis-cli HGETALL metrics:orders:by_city     # orders per city
+
+# trending products over the sliding window, as the UI computes it
+curl.exe http://localhost:8085/api/live
+
+# aggregator progress / rebuild-from-Kafka on boot
+docker logs ecom-realtime-aggregator --tail 20
+```
+
+Redis holds only derived data. To rebuild it from scratch, just restart the
+aggregator (it replays every topic from `earliest`, committing no offsets):
+`docker compose restart realtime-aggregator`.
+
 ## Health checks
 
 ```bash

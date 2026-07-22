@@ -16,8 +16,10 @@ Panels:
 """
 import os
 import random
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
+import redis as redis_lib
 from flask import Flask, request, jsonify
 
 DSN = os.getenv(
@@ -25,7 +27,57 @@ DSN = os.getenv(
     "host=postgres port=5432 dbname=ecommerce user=postgres password=postgres",
 )
 
+# Read-only view onto the real-time serving layer maintained by
+# realtime-aggregator. The UI only READS these pre-aggregated counters; it never
+# writes them (the aggregator owns the write path).
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+TRENDING_WINDOW_MIN = int(os.getenv("TRENDING_WINDOW_MIN", "60"))
+
 app = Flask(__name__)
+
+_redis = None
+
+
+def get_redis():
+    """Lazily-built shared Redis client (decoded strings)."""
+    global _redis
+    if _redis is None:
+        _redis = redis_lib.from_url(REDIS_URL, decode_responses=True)
+    return _redis
+
+
+def compute_trending(r, top=10):
+    """Top products by units sold over the last TRENDING_WINDOW_MIN minutes.
+
+    The aggregator writes one ZSET per minute (`trending:min:<YYYYMMDDHHMM>`); the
+    "sliding window" is computed here on read by summing the last N buckets. This
+    keeps the read path side-effect free — it never mutates Redis.
+
+    The window is anchored on `metrics:last_event_min` (the newest event minute the
+    aggregator has seen), not wall-clock now(): the reader and the CDC event
+    stream can live on different clocks, and anchoring on the data's own time also
+    keeps trending correct while the aggregator replays a backlog on startup.
+    """
+    anchor = r.get("metrics:last_event_min")
+    try:
+        base = datetime.strptime(anchor, "%Y%m%d%H%M").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        base = datetime.now(timezone.utc)
+    keys = [f"trending:min:{(base - timedelta(minutes=i)).strftime('%Y%m%d%H%M')}"
+            for i in range(TRENDING_WINDOW_MIN)]
+    pipe = r.pipeline()
+    for k in keys:
+        pipe.zrange(k, 0, -1, withscores=True)
+    scores = {}
+    for res in pipe.execute():
+        for member, score in res:
+            scores[member] = scores.get(member, 0.0) + score
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])[:top]
+    if not ranked:
+        return []
+    names = r.hmget("dim:product_name", [m for m, _ in ranked])
+    return [{"product_id": int(m), "name": names[i] or f"#{m}", "units": int(s)}
+            for i, (m, s) in enumerate(ranked)]
 
 # Whitelisted insertable columns per table (auto PKs / defaults are excluded).
 TABLES = {
@@ -233,6 +285,30 @@ def order_detail(order_id):
     return jsonify({"ok": True, "order": order, "items": items})
 
 
+@app.get("/api/live")
+def live():
+    """Live pre-aggregated metrics from the Redis serving layer (read-only)."""
+    try:
+        r = get_redis()
+        total = int(r.get("metrics:orders:total") or 0)
+        revenue = float(r.get("metrics:revenue:paid") or 0.0)
+        events = int(r.get("metrics:events:processed") or 0)
+        updated = r.get("metrics:updated_at")
+        status = {k: int(v) for k, v in (r.hgetall("metrics:orders:status") or {}).items()}
+        by_city = sorted(
+            ({"city": k, "count": int(v)} for k, v in (r.hgetall("metrics:orders:by_city") or {}).items()),
+            key=lambda x: -x["count"],
+        )
+        trending = compute_trending(r, top=10)
+    except redis_lib.exceptions.RedisError as e:
+        return jsonify({"ok": False, "error": f"serving layer unavailable: {e}"}), 503
+    return jsonify({
+        "ok": True, "total_orders": total, "revenue_paid": round(revenue, 2),
+        "events": events, "updated_at": updated, "status": status,
+        "by_city": by_city, "trending": trending, "window_min": TRENDING_WINDOW_MIN,
+    })
+
+
 @app.get("/")
 def index():
     return INDEX_HTML
@@ -291,6 +367,18 @@ INDEX_HTML = """<!doctype html>
   .ok { color:#4ade80; } .err { color:#f87171; } .muted{color:#8b97b0;}
   .counts { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:12px; color:#9aa6c0; margin-top:6px;}
   .counts b { color:#e6e9ef; }
+  .stats { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(170px,1fr)); }
+  .stat { background:#161d2e; border:1px solid #26304a; border-radius:10px; padding:16px; }
+  .stat .n { font-size:26px; font-weight:800; color:#e6e9ef; }
+  .stat .l { font-size:12px; color:#9aa6c0; margin-top:4px; }
+  .live-grid { display:grid; gap:16px; grid-template-columns: 1fr 1fr; margin-top:16px; }
+  @media (max-width:760px){ .live-grid{ grid-template-columns:1fr; } }
+  .bar-row { display:flex; align-items:center; gap:10px; margin:7px 0; font-size:13px; }
+  .bar-row .name { flex:0 0 128px; color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar-row .track { flex:1; background:#0f1420; border-radius:6px; height:9px; }
+  .bar-row .bar { display:block; height:9px; border-radius:6px; background:#3b82f6; }
+  .bar-row .val { flex:0 0 44px; text-align:right; color:#9aa6c0; }
+  .live-updated { font-size:12px; color:#8b97b0; margin-top:12px; }
 </style></head>
 <body>
 <header>
@@ -301,6 +389,7 @@ INDEX_HTML = """<!doctype html>
 <div class="tabs">
   <button class="tab active" data-tab="insert" onclick="showTab('insert')">✍️ Manuel Insert</button>
   <button class="tab" data-tab="lookup" onclick="showTab('lookup')">🔎 Sipariş Detay</button>
+  <button class="tab" data-tab="live" onclick="showTab('live')">📊 Canlı Metrikler</button>
 </div>
 <main>
   <section id="tab-insert" class="tabpanel grid">
@@ -381,6 +470,18 @@ INDEX_HTML = """<!doctype html>
       <div id="lk_result" style="margin-top:16px"><span class="muted">Bir order_id girin…</span></div>
     </div>
   </section>
+
+  <section id="tab-live" class="tabpanel hidden">
+    <div class="sub" style="margin-bottom:12px">
+      Redis <b>serving layer</b>'dan canlı okunur (realtime-aggregator, Kafka → Redis). Warehouse/dbt değil; 2 sn'de bir yenilenir.
+    </div>
+    <div class="stats" id="live_stats"><span class="muted">Yükleniyor…</span></div>
+    <div class="live-grid">
+      <div class="card"><h2>🏙️ Şehir bazında sipariş (canlı)</h2><div id="live_city"></div></div>
+      <div class="card"><h2>🔥 Trend ürünler <span class="muted" id="live_window"></span></h2><div id="live_trending"></div></div>
+    </div>
+    <div class="live-updated" id="live_updated"></div>
+  </section>
 </main>
 
 <script>
@@ -437,10 +538,45 @@ async function randomOrders() {
     log(`🎲 ${res.created.length} sipariş oluşturuldu`, 'ok'); loadMeta();
   } else log(`✕ ${res.error}`, 'err');
 }
+let liveTimer = null;
 function showTab(name) {
   document.querySelectorAll('.tabpanel').forEach(p=>p.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  // Poll the serving layer only while the live tab is visible.
+  if (name === 'live') { refreshLive(); liveTimer = liveTimer || setInterval(refreshLive, 2000); }
+  else if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+function bars(rows, color) {
+  if (!rows.length) return '<span class="muted">veri yok</span>';
+  const max = Math.max(1, ...rows.map(r=>r.val));
+  return rows.map(r=>`<div class="bar-row"><span class="name" title="${r.label}">${r.label}</span>
+    <span class="track"><span class="bar" style="width:${Math.round(r.val/max*100)}%${color?';background:'+color:''}"></span></span>
+    <span class="val">${r.val}</span></div>`).join('');
+}
+async function refreshLive() {
+  const stats = document.getElementById('live_stats');
+  let d;
+  try { d = await (await fetch('/api/live')).json(); }
+  catch(e){ stats.innerHTML = '<span class="err">İstek başarısız</span>'; return; }
+  if (!d.ok) { stats.innerHTML = `<span class="err">Serving layer erişilemiyor: ${d.error||''}</span>`; return; }
+  const s = d.status || {};
+  const n = x => (x||0).toLocaleString('tr');
+  stats.innerHTML = `
+    <div class="stat"><div class="n">${n(d.total_orders)}</div><div class="l">Toplam sipariş</div></div>
+    <div class="stat"><div class="n">${d.revenue_paid.toLocaleString('tr',{maximumFractionDigits:0})}₺</div><div class="l">Ödenen ciro</div></div>
+    <div class="stat"><div class="n">${n(s.PAID)}</div><div class="l">PAID</div></div>
+    <div class="stat"><div class="n">${n(s.CREATED)}</div><div class="l">CREATED (bekleyen)</div></div>
+    <div class="stat"><div class="n">${n(s.CANCELLED)}</div><div class="l">CANCELLED</div></div>
+    <div class="stat"><div class="n">${n(d.events)}</div><div class="l">İşlenen CDC olayı</div></div>`;
+  document.getElementById('live_city').innerHTML =
+    bars(d.by_city.map(c=>({label:c.city, val:c.count})));
+  document.getElementById('live_window').textContent = `(son ${d.window_min} dk)`;
+  document.getElementById('live_trending').innerHTML =
+    bars(d.trending.map((t,i)=>({label:`${i+1}. ${t.name}`, val:t.units})), '#f59e0b')
+    || '<span class="muted">henüz satış yok</span>';
+  document.getElementById('live_updated').textContent =
+    d.updated_at ? ('Son güncelleme: ' + new Date(d.updated_at).toLocaleTimeString('tr')) : '';
 }
 async function lookup() {
   const id = document.getElementById('lk_id').value;

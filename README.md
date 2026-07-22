@@ -29,6 +29,9 @@ flowchart LR
     DBZ -->|JSON events| KAFKA["Kafka cluster<br/>3 brokers (RF=3)"]
     KAFKA -->|stream| SPARK[PySpark]
     KAFKA -->|inventory stream| STOCK[Stock Monitor<br/>low-stock alerts]
+    KAFKA -->|orders + items stream| AGG[Real-Time Aggregator]
+    AGG -->|live pre-aggregates| REDIS[(Redis<br/>serving layer)]
+    REDIS -->|read| OUI[Order UI<br/>live metrics tab]
     SPARK -->|Iceberg write| MINIO[(MinIO<br/>Lakehouse)]
     STOCK -->|Iceberg write<br/>stock_alerts| MINIO
     MINIO -->|read| THRIFT[Spark Thrift Server]
@@ -72,6 +75,10 @@ flowchart TB
         SM[Stock Monitor<br/>stock_monitor.py<br/>group: stock-monitor-service]
         KAFKA_CLUSTER -->|subscribe inventory topic| SM
         SM -->|stock_qty below threshold| ALERT[Low-stock alert<br/>Slack / email in prod]
+        AGG[Real-Time Aggregator<br/>aggregator.py<br/>group: realtime-aggregator]
+        KAFKA_CLUSTER -->|subscribe orders + items + dims| AGG
+        AGG -->|live counters + trending| RDS[("Redis<br/>serving layer")]
+        RDS -->|read-only, 2s refresh| OUI2[Order UI<br/>Canlı Metrikler tab]
     end
 
     subgraph LAKEHOUSE["Lakehouse - MinIO"]
@@ -151,6 +158,14 @@ Structured Streaming job that:
 **Stock Monitor (`stock-monitor/stock_monitor.py`)**
 A second, independent Kafka consumer (consumer group `stock-monitor-service`) that subscribes to `ecom.public.inventory` and raises a low-stock alert when a product drops below a threshold. Alerts are emitted to stdout **and** appended to the Iceberg table `lakehouse.ops.stock_alerts` (queryable from Superset/MCP; disable with `WRITE_ICEBERG_ALERTS=false`). Does not touch the analytics pipeline.
 *Why:* Demonstrates Kafka fan-out — the same CDC stream feeding multiple independent consumers. Adding it required no changes to Postgres, Debezium, Kafka, or PySpark. See "Multiple Consumers" below.
+
+### Serving Layer (Real-Time)
+
+**Real-Time Aggregator (`realtime-aggregator/aggregator.py`) + Redis**
+A third independent Kafka consumer that maintains **pre-aggregated live metrics** in Redis: total orders, PAID revenue, live status breakdown, orders-per-city, and a trending-products ranking. It consumes the `orders` and `order_items` topics for facts, and keeps small **dimension caches** in Redis (`user_id → city`, `product_id → name`) warmed from the `users`/`products` topics — a stream-table join done the key/value way, since city lives on `users` and product names on `products`.
+*Why:* Everything else queryable here goes through Spark Thrift (seconds–minutes) or the nightly dbt batch — correct for history, far too slow for a live operational view. Real platforms answer *"revenue so far today?"*, *"orders per city right now?"*, *"what's trending this minute?"* from a **speed / serving layer**: a stream processor pre-computes aggregates into a low-latency store so reads are sub-millisecond. This is the classic Lambda/Kappa split — **Redis for live pre-aggregated reads, the lakehouse for correctness and full history** — and the two complement rather than replace each other.
+
+Redis here is a **derived cache, not a source of truth** (bronze stays authoritative — see CLAUDE.md). The aggregator commits no Kafka offsets and replays every topic from `earliest` on each boot, so the entire Redis state is rebuilt from the Kafka log: lose Redis, restart the service, and it repopulates itself. Trending is stored as one ZSET per minute (`trending:min:<YYYYMMDDHHMM>`) and the sliding window is summed on read, anchored on the newest event minute the aggregator has seen (not wall-clock time) so it stays correct under clock skew and during backlog replay. The **order-ui "Canlı Metrikler" tab** reads these counters (read-only) and refreshes every 2 s.
 
 ### Lakehouse
 
@@ -242,6 +257,7 @@ The detailed design rationale lives in **[ARCHITECTURE.md](ARCHITECTURE.md)**:
 - [x] Phase 7 — Multiple Consumers: stock monitoring service (Kafka fan-out)
 - [x] Phase 8 — AI Access Layer: MCP server for natural-language querying (Claude Desktop)
 - [x] Phase 9 — Catalog & Lineage: DataHub metadata catalog (optional, opt-in compose file)
+- [x] Phase 10 — Serving Layer: real-time aggregator → Redis (live metrics + trending), read by the order-ui live tab
 
 ## Known Limitations & Production Roadmap
 
@@ -272,14 +288,14 @@ change that adds, removes, or resizes source files.
 
 | Type | Kind | Lines | Share | In GitHub bar? |
 | --- | --- | ---: | ---: | :---: |
-| Markdown | Markup (prose) | 1505 | 31.1% | — |
-| YAML | Data / config format | 1228 | 25.4% | — |
-| Python | Programming language | 1218 | 25.2% | ✅ |
-| SQL | Query language | 525 | 10.9% | — |
-| Shell | Scripting language | 182 | 3.8% | ✅ |
-| Dockerfile | Config DSL | 151 | 3.1% | ✅ |
+| Markdown | Markup (prose) | 1556 | 30.7% | — |
+| Python | Programming language | 1354 | 26.7% | ✅ |
+| YAML | Data / config format | 1275 | 25.2% | — |
+| SQL | Query language | 525 | 10.4% | — |
+| Shell | Scripting language | 182 | 3.6% | ✅ |
+| Dockerfile | Config DSL | 151 | 3.0% | ✅ |
 | JSON | Data format | 25 | 0.5% | — |
-| **Total** | | **4834** | **100%** | |
+| **Total** | | **5068** | **100%** | |
 
 > **Why GitHub shows only Python/Dockerfile/Shell:** GitHub's language bar
 > is computed by [Linguist](https://github.com/github-linguist/linguist),
@@ -328,6 +344,8 @@ Then connect Superset to Spark Thrift Server:
 | Service | URL | Credentials | Volume |
 |---------|-----|-------------|--------|
 | Redpanda Console | http://localhost:8081 | — | — |
+| Order UI *(manual insert + live metrics)* | http://localhost:8085 | — | — |
+| Redis *(serving layer)* | localhost:6379 | — | `redis_data` |
 | Airflow | http://localhost:8082 | admin / admin | `airflow_db_data` |
 | Debezium REST API | http://localhost:8083 | — | — |
 | Superset | http://localhost:8088 | admin / admin | `superset_db_data` |
